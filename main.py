@@ -198,6 +198,244 @@ def show_managers(slug: str):
         print(f"\n  All managers configured.")
 
 
+def _refresh_manager_names(db, franchise):
+    """Update team.manager_name from current config for all synced data."""
+    rows = db.fetchall(
+        "SELECT DISTINCT manager_guid FROM team WHERE manager_guid != '' AND (manager_name IS NULL OR manager_name = '')"
+    )
+    for r in rows:
+        name = franchise.manager_name(r["manager_guid"])
+        if name:
+            db.execute(
+                "UPDATE team SET manager_name=? WHERE manager_guid=?",
+                (name, r["manager_guid"]),
+            )
+
+
+def _resolve_league_key(slug: str, season: int = None) -> tuple:
+    """Get db + league_key for a franchise. Returns (Database, league_key).
+
+    If no season specified, uses the latest season that has synced data.
+    """
+    from config import get_franchise_by_slug
+    from db import Database
+
+    franchise = get_franchise_by_slug(slug)
+    if not franchise:
+        print(f"Unknown franchise slug: '{slug}'")
+        return None, None
+
+    db = Database(slug)
+    _refresh_manager_names(db, franchise)
+
+    if season:
+        league_key = franchise.league_key_for_season(season)
+        if not league_key:
+            print(f"No league key for season {season}")
+            db.close()
+            return None, None
+        row = db.fetchone("SELECT league_key FROM league WHERE league_key=?", (league_key,))
+        if not row:
+            print(f"No synced data for {slug} season {season}. Run: python main.py sync {slug} --season {season}")
+            db.close()
+            return None, None
+        return db, league_key
+
+    # No season specified — find latest synced season
+    row = db.fetchone("SELECT league_key FROM league ORDER BY season DESC LIMIT 1")
+    if not row:
+        print(f"No synced data for {slug}. Run: python main.py sync {slug}")
+        db.close()
+        return None, None
+
+    return db, row["league_key"]
+
+
+def _parse_season_arg(args: list) -> int | None:
+    """Extract --season N from args."""
+    if "--season" in args:
+        idx = args.index("--season")
+        if idx + 1 < len(args):
+            return int(args[idx + 1])
+    return None
+
+
+def _cmd_value(args: list):
+    """Show top players by z-score for a week."""
+    from analytics.value import PlayerValue
+
+    slug = args[0]
+    week = None
+    if "--week" in args:
+        idx = args.index("--week")
+        if idx + 1 < len(args):
+            week = int(args[idx + 1])
+
+    db, league_key = _resolve_league_key(slug, _parse_season_arg(args))
+    if not db:
+        return
+
+    if not week:
+        row = db.fetchone("SELECT current_week, end_week, is_finished FROM league WHERE league_key=?",
+                          (league_key,))
+        week = row["end_week"] if row["is_finished"] else max(row["current_week"] - 1, 1)
+
+    pv = PlayerValue(db, league_key)
+
+    # Check if MLB (has batter/pitcher split)
+    has_pitching = db.fetchone(
+        "SELECT COUNT(*) as n FROM stat_category "
+        "WHERE league_key=? AND position_type='P' AND is_scoring_stat=1",
+        (league_key,),
+    )
+
+    print(f"\n{'='*60}")
+    print(f"Player Value — Week {week}")
+    print(f"{'='*60}")
+
+    if has_pitching and has_pitching["n"] > 0:
+        batters = pv.top_batters(week, limit=5)
+        print(f"\n  Batter of the Week:")
+        for i, p in enumerate(batters):
+            line = ", ".join(f"{k}={v}" for k, v in p.stat_line.items() if v)
+            print(f"    {i+1}. {p.name} ({p.manager}) z={p.z_total:+.2f}")
+            print(f"       {line}")
+
+        pitchers = pv.top_pitchers(week, limit=5)
+        print(f"\n  Pitcher of the Week:")
+        for i, p in enumerate(pitchers):
+            line = ", ".join(f"{k}={v}" for k, v in p.stat_line.items() if v)
+            print(f"    {i+1}. {p.name} ({p.manager}) z={p.z_total:+.2f}")
+            print(f"       {line}")
+    else:
+        players = pv.top_players(week, limit=10)
+        print(f"\n  Player of the Week:")
+        for i, p in enumerate(players):
+            line = ", ".join(f"{k}={v}" for k, v in p.stat_line.items() if v)
+            print(f"    {i+1}. {p.name} ({p.manager}) z={p.z_total:+.2f}")
+            print(f"       {line}")
+
+    db.close()
+
+
+def _cmd_teams(slug: str, week: int):
+    """Show team profiles / power rankings."""
+    from analytics.teams import TeamProfiler
+
+    db, league_key = _resolve_league_key(slug)
+    if not db:
+        return
+
+    profiler = TeamProfiler(db, league_key)
+    profiles = profiler.build_profiles(week)
+
+    print(f"\n{'='*60}")
+    print(f"Power Rankings — Week {week}")
+    print(f"{'='*60}")
+
+    for p in profiles:
+        rank_change = p.prev_rank - p.rank
+        arrow = ""
+        if rank_change > 0:
+            arrow = f" (+{rank_change})"
+        elif rank_change < 0:
+            arrow = f" ({rank_change})"
+
+        streak_str = f"W{p.streak}" if p.streak > 0 else (f"L{-p.streak}" if p.streak < 0 else "")
+        form = "-".join(p.last_3)
+
+        print(f"\n  {p.rank}. {p.team_name} ({p.manager}){arrow}")
+        print(f"     Record: {p.wins}-{p.losses}-{p.ties}  |  Form: {form}  {streak_str}")
+        print(f"     Strengths: {', '.join(p.cat_strengths)}  |  Weaknesses: {', '.join(p.cat_weaknesses)}")
+        if p.mvp_name:
+            print(f"     MVP: {p.mvp_name} (z={p.mvp_z:+.2f})")
+        if p.opponent_name:
+            print(f"     Next: vs {p.opponent_name} (H2H: {p.h2h_record})")
+
+    db.close()
+
+
+def _cmd_recap(args: list):
+    """Show weekly recap."""
+    from analytics.recap import RecapAssembler
+
+    slug = args[0]
+    latest = "--latest" in args
+    week = None
+
+    if not latest and len(args) > 1 and args[1].isdigit():
+        week = int(args[1])
+
+    db, league_key = _resolve_league_key(slug)
+    if not db:
+        return
+
+    if not week:
+        row = db.fetchone("SELECT current_week, end_week, is_finished FROM league WHERE league_key=?",
+                          (league_key,))
+        week = row["end_week"] if row["is_finished"] else max(row["current_week"] - 1, 1)
+
+    assembler = RecapAssembler(db, league_key)
+    recap = assembler.build(week)
+
+    print(f"\n{'='*60}")
+    print(f"Weekly Recap — {recap.league_name} Week {recap.week}")
+    print(f"{recap.week_start} to {recap.week_end}")
+    print(f"{'='*60}")
+
+    # Matchups
+    print(f"\n  MATCHUPS")
+    for m in recap.matchups:
+        tag = ""
+        if m.is_playoffs:
+            tag = " [PLAYOFF]"
+        elif m.is_consolation:
+            tag = " [CONSOLATION]"
+        print(f"    {m.team_1_name} ({m.team_1_manager}) {m.cats_won_1}-{m.cats_won_2}-{m.cats_tied} "
+              f"{m.team_2_name} ({m.team_2_manager}){tag}")
+
+        # Category detail
+        for c in m.categories:
+            v1 = c["team_1_value"] if c["team_1_value"] is not None else "-"
+            v2 = c["team_2_value"] if c["team_2_value"] is not None else "-"
+            marker = "<" if c["winner"] == 1 else (">" if c["winner"] == 2 else "=")
+            print(f"      {c['display_name']:>6}: {str(v1):>8} {marker} {str(v2):<8}")
+
+    # Awards
+    print(f"\n  AWARDS")
+    if recap.batter_of_week:
+        b = recap.batter_of_week
+        line = ", ".join(f"{k}={v}" for k, v in b.stat_line.items() if v)
+        print(f"    Batter of the Week: {b.name} ({b.manager}) z={b.z_total:+.2f}")
+        print(f"      {line}")
+    if recap.pitcher_of_week:
+        p = recap.pitcher_of_week
+        line = ", ".join(f"{k}={v}" for k, v in p.stat_line.items() if v)
+        print(f"    Pitcher of the Week: {p.name} ({p.manager}) z={p.z_total:+.2f}")
+        print(f"      {line}")
+    if recap.player_of_week:
+        p = recap.player_of_week
+        line = ", ".join(f"{k}={v}" for k, v in p.stat_line.items() if v)
+        print(f"    Player of the Week: {p.name} ({p.manager}) z={p.z_total:+.2f}")
+        print(f"      {line}")
+
+    # Standings
+    print(f"\n  STANDINGS (through week {week})")
+    for s in recap.standings:
+        print(f"    {s['rank']:>2}. {s['team_name']:<30} {s['wins']}-{s['losses']}-{s['ties']}")
+
+    # Power Rankings summary
+    print(f"\n  POWER RANKINGS")
+    for p in recap.profiles:
+        streak_str = f"W{p.streak}" if p.streak > 0 else (f"L{-p.streak}" if p.streak < 0 else "")
+        form = "-".join(p.last_3)
+        print(f"    {p.rank}. {p.team_name} ({p.manager}) {p.wins}-{p.losses}-{p.ties} {streak_str} [{form}]")
+        if p.mvp_name:
+            print(f"       MVP: {p.mvp_name} (z={p.mvp_z:+.2f})")
+
+    db.close()
+
+
 USAGE = """
 Usage:
   python main.py franchises                     — Show configured franchises
@@ -211,6 +449,11 @@ Usage:
   python main.py sync <slug> --season <year>    — Sync one season
   python main.py sync <slug> --incremental      — Sync latest unsynced week only
   python main.py managers <slug>                — Discover manager GUIDs for config
+
+  python main.py value <slug> --week <N>        — Top players by z-score for a week
+  python main.py teams <slug> <week>            — Team profiles / power rankings
+  python main.py recap <slug> <week>            — Full weekly recap
+  python main.py recap <slug> --latest          — Recap for most recent completed week
 """.strip()
 
 
@@ -248,6 +491,12 @@ def main():
         sync_command(slug, season=season, incremental=incremental)
     elif cmd == "managers" and len(args) > 1:
         show_managers(args[1])
+    elif cmd == "value" and len(args) > 1:
+        _cmd_value(args[1:])
+    elif cmd == "teams" and len(args) > 2:
+        _cmd_teams(args[1], int(args[2]))
+    elif cmd == "recap" and len(args) > 1:
+        _cmd_recap(args[1:])
     else:
         print(f"Unknown command: {cmd}\n")
         print(USAGE)
