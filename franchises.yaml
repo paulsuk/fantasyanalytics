@@ -8,6 +8,39 @@ mlb:
       2023: "422.l.18491"
       2024: "431.l.23200"
       2025: "458.l.25845"
+    managers:
+      "MBWXMSFQRBRIJ7DECGEDMVVO6Y":
+        name: "Paul Suk"
+        short_name: "Paul"
+      "3NHH2WZPAXF4Y4UWUU3R5SVBZ4":
+        name: "Minho Suk"
+        short_name: "Minho"
+      "5IFGWHAGFAO7PKNH36OPT7DEME":
+        name: "Shane Graham"
+        short_name: "Shane"
+      "2E634HDJFSG423B2ZMSAQWFJCI":
+        name: "Jerry Zhang"
+        short_name: "Jerry"
+      "ENNPQ4FMOGWJGBOJHXQP3A4M5Y":
+        name: "Russell Johnson"
+        short_name: "Russell"
+      "Q2Z2T2CXBSK6JYVRUBREBQTHFI":
+        name: "Matthew Chang"
+        short_name: "Matthew"
+      "HLR4E6ECPDYTBD7G4SYKPPA2U4":
+        name: "Sean Davidson"
+        short_name: "Sean"
+      "LERUUJFBXYSESU5SUXLD4R3M7Y":
+        name: "David Yun"
+        short_name: "Dave"
+      "PWB7FXM7UOU756GYIWBGZSRQ5E":
+        name: "Henry Shi"
+        short_name: "Henry"
+      "AM6DQC4TJQ2WMDNRQ4IEKDJJY4":
+        name: "Courtney Smith"
+        short_name: "Courtney"
+    former_managers: {}
+      # GUIDs for Mari and Ian will be discovered when syncing historical seasons
 
 nba:
   - name: TK Fiji Fantasy
@@ -21,3 +54,41 @@ nba:
       2023: "428.l.39239"
       2024: "454.l.14696"
       2025: "466.l.58930"
+    managers:
+      "MBWXMSFQRBRIJ7DECGEDMVVO6Y":
+        name: "Paul Suk"
+        short_name: "Paul"
+      "Q2Z2T2CXBSK6JYVRUBREBQTHFI":
+        name: "Matthew Chang"
+        short_name: "Matthew"
+      "I2JASJIPLCEFNLGIGP3YSF3PNA":
+        name: "Dima Sochnyev"
+        short_name: "Dima"
+      "TPQP3QIJDGMFCOVYY4I7G4JFJA":
+        name: "Anthony Khoury"
+        short_name: "Anthony"
+      "NVYBDYHLA2A7BVG6BNNLQXFRIA":
+        name: "Allen Xu"
+        short_name: "Allen"
+      "NU43ONGBJCFMLV7QTQ2OX76L6Q":
+        name: "Calvin Chu"
+        short_name: "Calvin"
+      "J4DLCFVOWSD2A42M26KC4ZHBUY":
+        name: "Kane Li"
+        short_name: "Kane"
+      "N75CNSMCRCHBOZGYJDTPLNW5SE":
+        name: "Edgar Cordero"
+        short_name: "Edgar"
+      "4BB3OIHYK4UUUBOS3LLJHWHWWA":
+        name: "Zaid Kassar"
+        short_name: "Zaid"
+      "DXSDN7X6W2JXAF27JFYJEFOPTI":
+        name: "Nikola Andrejevic"
+        short_name: "Nikola"
+      "P3XKRRKUOQA5DF3AUNZMD5ER6M":
+        name: "Avel Ivanov"
+        short_name: "Avel"
+      "APW3A5NLSYBLJS5FODVWZ6RQG4":
+        name: "Oliver Nadzieja"
+        short_name: "Oliver"
+    former_managers: {}

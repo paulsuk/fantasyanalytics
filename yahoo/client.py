@@ -3,22 +3,19 @@
 import os
 from pathlib import Path
 
-import yaml
 from dotenv import load_dotenv
 from yfpy.query import YahooFantasySportsQuery
+
+from config import (
+    Franchise,
+    get_franchises,
+    get_default_franchise,
+    get_franchise_by_slug,
+)
 
 load_dotenv()  # needed for YAHOO_CONSUMER_KEY/SECRET
 
 _PROJECT_DIR = Path(__file__).resolve().parent.parent
-_FRANCHISES_FILE = _PROJECT_DIR / "franchises.yaml"
-
-
-def _load_franchises() -> dict:
-    """Load franchise definitions from franchises.yaml."""
-    if not _FRANCHISES_FILE.exists():
-        return {}
-    with open(_FRANCHISES_FILE) as f:
-        return yaml.safe_load(f) or {}
 
 
 def _parse_league_key(league_key: str) -> tuple[str, str]:
@@ -27,60 +24,6 @@ def _parse_league_key(league_key: str) -> tuple[str, str]:
     if len(parts) == 3:
         return parts[0], parts[2]
     return "", league_key
-
-
-class Franchise:
-    """A fantasy league that spans multiple seasons."""
-
-    def __init__(self, sport: str, data: dict):
-        self.sport = sport
-        self.name = data["name"]
-        self.slug = data["slug"]
-        self.is_default = data.get("default", False)
-        # seasons: {year_int: league_key_str}
-        self.seasons: dict[int, str] = {
-            int(k): v for k, v in data.get("seasons", {}).items()
-        }
-
-    @property
-    def latest_season(self) -> int:
-        return max(self.seasons) if self.seasons else 0
-
-    @property
-    def latest_league_key(self) -> str:
-        return self.seasons.get(self.latest_season, "")
-
-    def league_key_for_season(self, season: int) -> str | None:
-        return self.seasons.get(season)
-
-
-def get_franchises() -> dict[str, list[Franchise]]:
-    """Load all franchises grouped by sport."""
-    raw = _load_franchises()
-    result = {}
-    for sport, franchise_list in raw.items():
-        result[sport] = [Franchise(sport, f) for f in franchise_list]
-    return result
-
-
-def get_default_franchise(sport: str) -> Franchise | None:
-    """Get the default franchise for a sport."""
-    franchises = get_franchises()
-    for f in franchises.get(sport, []):
-        if f.is_default:
-            return f
-    # Fall back to first franchise for the sport
-    sport_franchises = franchises.get(sport, [])
-    return sport_franchises[0] if sport_franchises else None
-
-
-def get_franchise_by_slug(slug: str) -> Franchise | None:
-    """Find a franchise by its slug across all sports."""
-    for franchise_list in get_franchises().values():
-        for f in franchise_list:
-            if f.slug == slug:
-                return f
-    return None
 
 
 class YahooClient:
@@ -234,6 +177,32 @@ class YahooClient:
     def get_draft_results(self, sport: str):
         """Get draft results."""
         return self._get_query(sport).get_league_draft_results()
+
+    # -- Weekly data methods (for sync) --
+
+    def get_roster_with_stats(self, sport: str, team_id, week: int):
+        """Get a team's roster with per-player stats for a specific week."""
+        return self._get_query(sport).get_team_roster_player_stats_by_week(
+            team_id=team_id, chosen_week=week
+        )
+
+    def get_team_stats_by_week(self, query: YahooFantasySportsQuery,
+                                team_key: str, week: int) -> list:
+        """Get team aggregate stats for a week via raw API call.
+
+        Uses raw query because yfpy's get_team_stats_by_week has a bug
+        (KeyError on 'team_projected_points' for historical weeks).
+        Returns list of {'stat_id': int, 'value': float} dicts.
+        """
+        url = (
+            f"https://fantasysports.yahooapis.com/fantasy/v2"
+            f"/team/{team_key}/stats;type=week;week={week}"
+        )
+        response = query.query(url, ["team", "team_stats"], data_type_class=None)
+        return [
+            {"stat_id": s["stat"].stat_id, "value": s["stat"].value}
+            for s in response.get("stats", [])
+        ]
 
     # -- Stat categories --
 

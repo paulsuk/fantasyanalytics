@@ -2,7 +2,8 @@
 
 import sys
 
-from yahoo.client import YahooClient, get_franchises
+from yahoo.client import YahooClient
+from config import get_franchises
 from baseball.data import MLBDataClient
 from basketball.data import NBADataClient
 
@@ -137,17 +138,85 @@ def show_nba_stats():
         print("Player not found")
 
 
+def sync_command(slug: str, season: int = None, incremental: bool = False):
+    """Sync Yahoo data into the database."""
+    from sync.yahoo_sync import YahooSync
+
+    syncer = YahooSync(slug)
+    try:
+        if incremental:
+            syncer.sync_incremental()
+        elif season:
+            syncer.sync_season(season)
+        else:
+            syncer.sync_all()
+    finally:
+        syncer.close()
+
+
+def show_managers(slug: str):
+    """Discover manager GUIDs for a franchise (for config)."""
+    from config import get_franchise_by_slug
+
+    franchise = get_franchise_by_slug(slug)
+    if not franchise:
+        print(f"Unknown franchise slug: '{slug}'")
+        return
+
+    client = YahooClient()
+    print(f"\n{'='*50}")
+    print(f"Managers — {franchise.name}")
+    print(f"{'='*50}")
+
+    # Check latest season for current managers
+    season = franchise.latest_season
+    query = client.query_for_franchise(slug, season)
+    teams = query.get_league_teams()
+
+    print(f"\n  Season {season}:")
+    guids_seen = set()
+    for team in teams:
+        mgrs = getattr(team, "managers", [])
+        mgr = mgrs[0] if mgrs else None
+        if not mgr:
+            continue
+        guid = getattr(mgr, "guid", "")
+        nickname = getattr(mgr, "nickname", "")
+        team_name = _name(team.name)
+        configured = franchise.manager_name(guid)
+        status = f" -> {configured}" if configured else " (not configured)"
+        print(f"    {nickname:<20} {team_name:<30} GUID: {guid}{status}")
+        guids_seen.add(guid)
+
+    # Show YAML template for unconfigured managers
+    unconfigured = [
+        (getattr(mgrs[0], "guid", ""), getattr(mgrs[0], "nickname", ""))
+        for team in teams
+        for mgrs in [getattr(team, "managers", [])]
+        if mgrs and not franchise.manager_name(getattr(mgrs[0], "guid", ""))
+    ]
+
+    if unconfigured:
+        print(f"\n  Add to franchises.yaml under managers:")
+        for guid, nickname in unconfigured:
+            print(f'      "{guid}":')
+            print(f'        name: "{nickname}"')
+            print(f'        short_name: "{nickname}"')
+
+
 USAGE = """
 Usage:
-  python main.py franchises         — Show configured franchises
-  python main.py seasons            — List all your Yahoo sport-seasons
-  python main.py leagues            — List your current-season leagues
-  python main.py leagues mlb        — List only MLB leagues
-  python main.py leagues nba        — List only NBA leagues
-  python main.py yahoo mlb          — Show MLB league info + standings
-  python main.py yahoo nba          — Show NBA league info + standings
-  python main.py mlb                — FanGraphs batting leaders (no Yahoo)
-  python main.py nba                — NBA player game logs (no Yahoo)
+  python main.py franchises                     — Show configured franchises
+  python main.py seasons                        — List all your Yahoo sport-seasons
+  python main.py leagues [mlb|nba]              — List your current-season leagues
+  python main.py yahoo mlb|nba                  — Show league info + standings
+  python main.py mlb                            — FanGraphs batting leaders
+  python main.py nba                            — NBA player game logs
+
+  python main.py sync <slug>                    — Sync all seasons for a franchise
+  python main.py sync <slug> --season <year>    — Sync one season
+  python main.py sync <slug> --incremental      — Sync latest unsynced week only
+  python main.py managers <slug>                — Discover manager GUIDs for config
 """.strip()
 
 
@@ -174,6 +243,17 @@ def main():
         show_mlb_stats()
     elif cmd == "nba":
         show_nba_stats()
+    elif cmd == "sync" and len(args) > 1:
+        slug = args[1]
+        season = None
+        incremental = "--incremental" in args
+        if "--season" in args:
+            idx = args.index("--season")
+            if idx + 1 < len(args):
+                season = int(args[idx + 1])
+        sync_command(slug, season=season, incremental=incremental)
+    elif cmd == "managers" and len(args) > 1:
+        show_managers(args[1])
     else:
         print(f"Unknown command: {cmd}\n")
         print(USAGE)
