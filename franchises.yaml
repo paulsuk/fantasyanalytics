@@ -1,0 +1,23 @@
+mlb:
+  - name: baseBALL or nothing
+    slug: baseball
+    default: true
+    seasons:
+      2021: "404.l.113064"
+      2022: "412.l.22171"
+      2023: "422.l.18491"
+      2024: "431.l.23200"
+      2025: "458.l.25845"
+
+nba:
+  - name: TK Fiji Fantasy
+    slug: basketball
+    default: true
+    seasons:
+      2019: "395.l.165072"
+      2020: "402.l.70383"
+      2021: "410.l.59817"
+      2022: "418.l.115133"
+      2023: "428.l.39239"
+      2024: "454.l.14696"
+      2025: "466.l.58930"

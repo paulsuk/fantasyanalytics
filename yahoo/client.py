@@ -3,36 +3,91 @@
 import os
 from pathlib import Path
 
+import yaml
 from dotenv import load_dotenv
 from yfpy.query import YahooFantasySportsQuery
 
-load_dotenv()
+load_dotenv()  # needed for YAHOO_CONSUMER_KEY/SECRET
 
-SPORT_CONFIGS = {
-    "mlb": {
-        "game_code": "mlb",
-        "league_key_env": "MLB_LEAGUE_KEY",
-    },
-    "nba": {
-        "game_code": "nba",
-        "league_key_env": "NBA_LEAGUE_KEY",
-    },
-}
+_PROJECT_DIR = Path(__file__).resolve().parent.parent
+_FRANCHISES_FILE = _PROJECT_DIR / "franchises.yaml"
 
 
-def _parse_league_id(league_key: str) -> str:
-    """Extract numeric league ID from full key like '458.l.25845'."""
+def _load_franchises() -> dict:
+    """Load franchise definitions from franchises.yaml."""
+    if not _FRANCHISES_FILE.exists():
+        return {}
+    with open(_FRANCHISES_FILE) as f:
+        return yaml.safe_load(f) or {}
+
+
+def _parse_league_key(league_key: str) -> tuple[str, str]:
+    """Parse a league key like '458.l.25845' into (game_id, league_id)."""
     parts = league_key.split(".")
     if len(parts) == 3:
-        return parts[2]
-    return league_key
+        return parts[0], parts[2]
+    return "", league_key
+
+
+class Franchise:
+    """A fantasy league that spans multiple seasons."""
+
+    def __init__(self, sport: str, data: dict):
+        self.sport = sport
+        self.name = data["name"]
+        self.slug = data["slug"]
+        self.is_default = data.get("default", False)
+        # seasons: {year_int: league_key_str}
+        self.seasons: dict[int, str] = {
+            int(k): v for k, v in data.get("seasons", {}).items()
+        }
+
+    @property
+    def latest_season(self) -> int:
+        return max(self.seasons) if self.seasons else 0
+
+    @property
+    def latest_league_key(self) -> str:
+        return self.seasons.get(self.latest_season, "")
+
+    def league_key_for_season(self, season: int) -> str | None:
+        return self.seasons.get(season)
+
+
+def get_franchises() -> dict[str, list[Franchise]]:
+    """Load all franchises grouped by sport."""
+    raw = _load_franchises()
+    result = {}
+    for sport, franchise_list in raw.items():
+        result[sport] = [Franchise(sport, f) for f in franchise_list]
+    return result
+
+
+def get_default_franchise(sport: str) -> Franchise | None:
+    """Get the default franchise for a sport."""
+    franchises = get_franchises()
+    for f in franchises.get(sport, []):
+        if f.is_default:
+            return f
+    # Fall back to first franchise for the sport
+    sport_franchises = franchises.get(sport, [])
+    return sport_franchises[0] if sport_franchises else None
+
+
+def get_franchise_by_slug(slug: str) -> Franchise | None:
+    """Find a franchise by its slug across all sports."""
+    for franchise_list in get_franchises().values():
+        for f in franchise_list:
+            if f.slug == slug:
+                return f
+    return None
 
 
 class YahooClient:
-    """Yahoo Fantasy client that supports multiple sports.
+    """Yahoo Fantasy client that supports multiple sports and franchises.
 
-    Creates one yfpy query instance per sport. Sport is selected by passing
-    "mlb" or "nba" to each method.
+    By default, uses the default franchise for each sport (from franchises.yaml).
+    Can also target a specific franchise or historical season.
     """
 
     def __init__(self):
@@ -45,42 +100,85 @@ class YahooClient:
             )
 
         self._queries: dict[str, YahooFantasySportsQuery] = {}
-        self._env_file = Path(__file__).resolve().parent.parent / ".env"
 
-    def _get_query(self, sport: str) -> YahooFantasySportsQuery:
-        """Get or create the yfpy query instance for a sport."""
-        if sport in self._queries:
-            return self._queries[sport]
+    def _make_query(self, game_code: str, league_key: str) -> YahooFantasySportsQuery:
+        """Create a yfpy query for a specific league key."""
+        game_id, league_id = _parse_league_key(league_key)
 
-        config = SPORT_CONFIGS.get(sport)
-        if not config:
-            raise ValueError(f"Unknown sport '{sport}'. Use: {list(SPORT_CONFIGS)}")
-
-        league_key = os.getenv(config["league_key_env"], "")
-        if not league_key:
-            raise ValueError(
-                f"Missing {config['league_key_env']} in .env"
-            )
-
-        league_id = _parse_league_id(league_key)
-
-        query = YahooFantasySportsQuery(
+        return YahooFantasySportsQuery(
             league_id=league_id,
-            game_code=config["game_code"],
+            game_code=game_code,
+            game_id=int(game_id) if game_id else None,
             yahoo_consumer_key=self._consumer_key,
             yahoo_consumer_secret=self._consumer_secret,
-            env_file_location=self._env_file,
+            env_file_location=_PROJECT_DIR,
             save_token_data_to_env_file=True,
             env_var_fallback=True,
             browser_callback=True,
         )
+
+    def _get_query(self, sport: str) -> YahooFantasySportsQuery:
+        """Get or create the yfpy query for a sport's default franchise (current season)."""
+        if sport in self._queries:
+            return self._queries[sport]
+
+        franchise = get_default_franchise(sport)
+        if not franchise:
+            raise ValueError(
+                f"No franchise configured for '{sport}' in franchises.yaml"
+            )
+
+        query = self._make_query(sport, franchise.latest_league_key)
         self._queries[sport] = query
         return query
+
+    def query_for_franchise(
+        self, slug: str, season: int = None
+    ) -> YahooFantasySportsQuery:
+        """Get a yfpy query for a specific franchise and optional season.
+
+        Useful for historical lookups across seasons.
+        """
+        franchise = get_franchise_by_slug(slug)
+        if not franchise:
+            raise ValueError(f"Unknown franchise slug: '{slug}'")
+
+        target_season = season or franchise.latest_season
+        league_key = franchise.league_key_for_season(target_season)
+        if not league_key:
+            available = sorted(franchise.seasons.keys())
+            raise ValueError(
+                f"Franchise '{slug}' has no season {target_season}. "
+                f"Available: {available}"
+            )
+
+        return self._make_query(franchise.sport, league_key)
+
+    # -- User / discovery methods --
+
+    def get_user_query(self) -> YahooFantasySportsQuery:
+        """Get a yfpy query for user-level operations (listing seasons, leagues, etc).
+
+        Uses the first available default franchise to authenticate.
+        """
+        for sport in ("mlb", "nba"):
+            franchise = get_default_franchise(sport)
+            if franchise:
+                return self._make_query(sport, franchise.latest_league_key)
+        raise ValueError("No franchises configured in franchises.yaml")
+
+    def get_current_user(self):
+        """Get the authenticated user's info."""
+        return self.get_user_query().get_current_user()
+
+    def get_user_teams(self):
+        """Get teams the user owns across all sports."""
+        return self.get_user_query().get_user_teams()
 
     # -- League methods --
 
     def get_league(self, sport: str):
-        """Get league info."""
+        """Get league info for the default franchise."""
         return self._get_query(sport).get_league_info()
 
     def get_settings(self, sport: str):
@@ -136,16 +234,6 @@ class YahooClient:
     def get_draft_results(self, sport: str):
         """Get draft results."""
         return self._get_query(sport).get_league_draft_results()
-
-    # -- User methods --
-
-    def get_current_user(self, sport: str):
-        """Get the authenticated user's info."""
-        return self._get_query(sport).get_current_user()
-
-    def get_user_teams(self, sport: str):
-        """Get teams the user owns."""
-        return self._get_query(sport).get_user_teams()
 
     # -- Stat categories --
 
