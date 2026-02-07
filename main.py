@@ -318,13 +318,21 @@ def _cmd_value(args: list):
     db.close()
 
 
-def _cmd_teams(slug: str, week: int):
+def _cmd_teams(args: list):
     """Show team profiles / power rankings."""
     from analytics.teams import TeamProfiler
 
-    db, league_key = _resolve_league_key(slug)
+    slug = args[0]
+    week = int(args[1]) if len(args) > 1 and args[1].isdigit() else None
+
+    db, league_key = _resolve_league_key(slug, _parse_season_arg(args))
     if not db:
         return
+
+    if not week:
+        row = db.fetchone("SELECT current_week, end_week, is_finished FROM league WHERE league_key=?",
+                          (league_key,))
+        week = row["end_week"] if row["is_finished"] else max(row["current_week"] - 1, 1)
 
     profiler = TeamProfiler(db, league_key)
     profiles = profiler.build_profiles(week)
@@ -366,7 +374,7 @@ def _cmd_recap(args: list):
     if not latest and len(args) > 1 and args[1].isdigit():
         week = int(args[1])
 
-    db, league_key = _resolve_league_key(slug)
+    db, league_key = _resolve_league_key(slug, _parse_season_arg(args))
     if not db:
         return
 
@@ -493,8 +501,8 @@ def main():
         show_managers(args[1])
     elif cmd == "value" and len(args) > 1:
         _cmd_value(args[1:])
-    elif cmd == "teams" and len(args) > 2:
-        _cmd_teams(args[1], int(args[2]))
+    elif cmd == "teams" and len(args) > 1:
+        _cmd_teams(args[1:])
     elif cmd == "recap" and len(args) > 1:
         _cmd_recap(args[1:])
     else:
