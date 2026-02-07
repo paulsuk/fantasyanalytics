@@ -3,7 +3,7 @@
 import time
 from datetime import datetime, timezone
 
-from config import get_franchise_by_slug, Franchise
+from config import get_franchise_by_slug, add_managers, Franchise
 from db import Database
 from yahoo.client import YahooClient
 
@@ -420,6 +420,36 @@ class YahooSync:
             raise
 
     # ------------------------------------------------------------------
+    # Manager check
+    # ------------------------------------------------------------------
+
+    def _check_unconfigured_managers(self, league_key: str):
+        """After sync, auto-add any unconfigured managers to franchises.yaml."""
+        rows = self.db.fetchall(
+            "SELECT DISTINCT manager_guid, manager_nickname FROM team "
+            "WHERE league_key=? AND manager_guid != ''",
+            (league_key,),
+        )
+        to_add = {}
+        for r in rows:
+            guid = r["manager_guid"]
+            if not self.franchise.manager_name(guid):
+                nickname = r["manager_nickname"]
+                to_add[guid] = {"name": nickname, "short_name": nickname}
+
+        if not to_add:
+            return
+
+        added = add_managers(self.franchise.slug, to_add)
+        if added:
+            # Reload franchise config so subsequent syncs see the new managers
+            self.franchise = get_franchise_by_slug(self.franchise.slug)
+            names = [to_add[g]["name"] for g in added]
+            print(f"  [config] Added {len(added)} manager(s) to franchises.yaml: {', '.join(names)}")
+            print(f"           Edit franchises.yaml to set full names if needed.")
+        print()
+
+    # ------------------------------------------------------------------
     # Full season sync
     # ------------------------------------------------------------------
 
@@ -477,6 +507,7 @@ class YahooSync:
         for week in weeks_to_sync:
             self.sync_week(query, league_key, week, num_teams, stat_categories)
 
+        self._check_unconfigured_managers(league_key)
         print(f"Season {season} sync complete.\n")
 
     def sync_all(self):

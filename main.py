@@ -155,8 +155,8 @@ def sync_command(slug: str, season: int = None, incremental: bool = False):
 
 
 def show_managers(slug: str):
-    """Discover manager GUIDs for a franchise (for config)."""
-    from config import get_franchise_by_slug
+    """Discover manager GUIDs and auto-add unconfigured ones to franchises.yaml."""
+    from config import get_franchise_by_slug, add_managers
 
     franchise = get_franchise_by_slug(slug)
     if not franchise:
@@ -168,13 +168,12 @@ def show_managers(slug: str):
     print(f"Managers — {franchise.name}")
     print(f"{'='*50}")
 
-    # Check latest season for current managers
     season = franchise.latest_season
     query = client.query_for_franchise(slug, season)
     teams = query.get_league_teams()
 
+    to_add = {}
     print(f"\n  Season {season}:")
-    guids_seen = set()
     for team in teams:
         mgrs = getattr(team, "managers", [])
         mgr = mgrs[0] if mgrs else None
@@ -184,24 +183,19 @@ def show_managers(slug: str):
         nickname = getattr(mgr, "nickname", "")
         team_name = _name(team.name)
         configured = franchise.manager_name(guid)
-        status = f" -> {configured}" if configured else " (not configured)"
-        print(f"    {nickname:<20} {team_name:<30} GUID: {guid}{status}")
-        guids_seen.add(guid)
+        if configured:
+            print(f"    {configured:<20} {team_name:<30} (configured)")
+        else:
+            print(f"    {nickname:<20} {team_name:<30} (new)")
+            to_add[guid] = {"name": nickname, "short_name": nickname}
 
-    # Show YAML template for unconfigured managers
-    unconfigured = [
-        (getattr(mgrs[0], "guid", ""), getattr(mgrs[0], "nickname", ""))
-        for team in teams
-        for mgrs in [getattr(team, "managers", [])]
-        if mgrs and not franchise.manager_name(getattr(mgrs[0], "guid", ""))
-    ]
-
-    if unconfigured:
-        print(f"\n  Add to franchises.yaml under managers:")
-        for guid, nickname in unconfigured:
-            print(f'      "{guid}":')
-            print(f'        name: "{nickname}"')
-            print(f'        short_name: "{nickname}"')
+    if to_add:
+        added = add_managers(slug, to_add)
+        names = [to_add[g]["name"] for g in added]
+        print(f"\n  Added {len(added)} manager(s) to franchises.yaml: {', '.join(names)}")
+        print(f"  Edit franchises.yaml to set full names if needed.")
+    else:
+        print(f"\n  All managers configured.")
 
 
 USAGE = """

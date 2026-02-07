@@ -84,3 +84,37 @@ def get_franchise_by_slug(slug: str) -> Franchise | None:
             if f.slug == slug:
                 return f
     return None
+
+
+def add_managers(slug: str, managers: dict[str, dict]) -> list[str]:
+    """Add new managers to a franchise's config and save to disk.
+
+    Args:
+        slug: Franchise slug (e.g., "baseball")
+        managers: {guid: {"name": "...", "short_name": "..."}, ...}
+
+    Returns:
+        List of GUIDs that were actually added (skips existing).
+    """
+    raw = _load_raw()
+    added = []
+
+    for sport, franchise_list in raw.items():
+        for fdata in franchise_list:
+            if fdata["slug"] != slug:
+                continue
+
+            if not fdata.get("managers"):
+                fdata["managers"] = {}
+
+            for guid, info in managers.items():
+                if guid not in fdata["managers"]:
+                    fdata["managers"][guid] = info
+                    added.append(guid)
+
+    if added:
+        with open(_FRANCHISES_FILE, "w") as f:
+            yaml.dump(raw, f, default_flow_style=False, sort_keys=False,
+                      allow_unicode=True)
+
+    return added
