@@ -75,49 +75,7 @@ class YahooSync:
             settings = query.get_league_settings()
             self._wait()
 
-            # League table
-            self.db.execute(
-                "INSERT OR REPLACE INTO league VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    league_key,
-                    league.season,
-                    decode_name(league.name),
-                    league.num_teams,
-                    league.scoring_type,
-                    len([s for s in settings.stat_categories.stats
-                         if not getattr(s, "is_only_display_stat", 0)]),
-                    league.current_week,
-                    league.start_week,
-                    league.end_week,
-                    settings.playoff_start_week,
-                    1 if getattr(settings, "uses_faab", False) else 0,
-                    getattr(league, "is_finished", 0),
-                    _now_iso(),
-                ),
-            )
-
-            # Stat categories
-            records = 0
-            for s in settings.stat_categories.stats:
-                stat = getattr(s, "stat", s)
-                self.db.execute(
-                    "INSERT OR REPLACE INTO stat_category VALUES (?,?,?,?,?,?,?,?,?)",
-                    (
-                        league_key,
-                        stat.stat_id,
-                        getattr(stat, "name", ""),
-                        getattr(stat, "display_name", ""),
-                        getattr(stat, "display_name", ""),  # abbr = display_name
-                        getattr(stat, "sort_order", 1),
-                        getattr(stat, "position_type", None),
-                        getattr(s, "is_only_display_stat", 0),
-                        0 if getattr(s, "is_only_display_stat", 0) else 1,
-                    ),
-                )
-                records += 1
-            self._wait()
-
-            # Teams
+            # Teams (fetch before transaction to avoid holding lock during API calls)
             teams = query.get_league_teams()
             self._wait()
             standings = query.get_league_standings()
@@ -128,31 +86,74 @@ class YahooSync:
             for t in standings.teams:
                 standings_map[t.team_key] = t
 
-            for team in teams:
-                st = standings_map.get(team.team_key, team)
-                mgrs = getattr(team, "managers", [])
-                mgr = mgrs[0] if mgrs else None
-                guid = getattr(mgr, "guid", "") if mgr else ""
-                nickname = getattr(mgr, "nickname", "") if mgr else ""
-                resolved_name = self.franchise.manager_name(guid) or ""
-
+            with self.db.transaction():
+                # League table
                 self.db.execute(
-                    "INSERT OR REPLACE INTO team VALUES (?,?,?,?,?,?,?,?,?)",
+                    "INSERT OR REPLACE INTO league VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         league_key,
-                        team.team_key,
-                        team.team_id,
-                        decode_name(team.name),
-                        guid,
-                        nickname,
-                        resolved_name,
-                        getattr(st, "waiver_priority", None),
-                        getattr(st, "faab_balance", None),
+                        league.season,
+                        decode_name(league.name),
+                        league.num_teams,
+                        league.scoring_type,
+                        len([s for s in settings.stat_categories.stats
+                             if not getattr(s, "is_only_display_stat", 0)]),
+                        league.current_week,
+                        league.start_week,
+                        league.end_week,
+                        settings.playoff_start_week,
+                        1 if getattr(settings, "uses_faab", False) else 0,
+                        getattr(league, "is_finished", 0),
+                        _now_iso(),
                     ),
                 )
-                records += 1
 
-            self._log_complete(league_key, "metadata", records=records)
+                # Stat categories
+                records = 0
+                for s in settings.stat_categories.stats:
+                    stat = getattr(s, "stat", s)
+                    self.db.execute(
+                        "INSERT OR REPLACE INTO stat_category VALUES (?,?,?,?,?,?,?,?,?)",
+                        (
+                            league_key,
+                            stat.stat_id,
+                            getattr(stat, "name", ""),
+                            getattr(stat, "display_name", ""),
+                            getattr(stat, "display_name", ""),  # abbr = display_name
+                            getattr(stat, "sort_order", 1),
+                            getattr(stat, "position_type", None),
+                            getattr(s, "is_only_display_stat", 0),
+                            0 if getattr(s, "is_only_display_stat", 0) else 1,
+                        ),
+                    )
+                    records += 1
+
+                # Teams
+                for team in teams:
+                    st = standings_map.get(team.team_key, team)
+                    mgrs = getattr(team, "managers", [])
+                    mgr = mgrs[0] if mgrs else None
+                    guid = getattr(mgr, "guid", "") if mgr else ""
+                    nickname = getattr(mgr, "nickname", "") if mgr else ""
+                    resolved_name = self.franchise.manager_name(guid) or ""
+
+                    self.db.execute(
+                        "INSERT OR REPLACE INTO team VALUES (?,?,?,?,?,?,?,?,?)",
+                        (
+                            league_key,
+                            team.team_key,
+                            team.team_id,
+                            decode_name(team.name),
+                            guid,
+                            nickname,
+                            resolved_name,
+                            getattr(st, "waiver_priority", None),
+                            getattr(st, "faab_balance", None),
+                        ),
+                    )
+                    records += 1
+
+                self._log_complete(league_key, "metadata", records=records)
             print(f"  [done] metadata: {records} records")
 
         except Exception as e:
@@ -174,22 +175,23 @@ class YahooSync:
             picks = query.get_league_draft_results()
             self._wait()
 
-            records = 0
-            for pick in picks:
-                self.db.execute(
-                    "INSERT OR REPLACE INTO draft_pick VALUES (?,?,?,?,?,?)",
-                    (
-                        league_key,
-                        pick.pick,
-                        pick.round,
-                        pick.team_key,
-                        pick.player_key,
-                        getattr(pick, "cost", None),
-                    ),
-                )
-                records += 1
+            with self.db.transaction():
+                records = 0
+                for pick in picks:
+                    self.db.execute(
+                        "INSERT OR REPLACE INTO draft_pick VALUES (?,?,?,?,?,?)",
+                        (
+                            league_key,
+                            pick.pick,
+                            pick.round,
+                            pick.team_key,
+                            pick.player_key,
+                            getattr(pick, "cost", None),
+                        ),
+                    )
+                    records += 1
 
-            self._log_complete(league_key, "draft", records=records)
+                self._log_complete(league_key, "draft", records=records)
             print(f"  [done] draft: {records} picks")
 
         except Exception as e:
@@ -211,44 +213,45 @@ class YahooSync:
             txns = query.get_league_transactions()
             self._wait()
 
-            records = 0
-            for txn in txns:
-                txn_key = txn.transaction_key
-                self.db.execute(
-                    "INSERT OR REPLACE INTO transaction_record VALUES (?,?,?,?,?,?,?,?,?)",
-                    (
-                        txn_key,
-                        league_key,
-                        getattr(txn, "type", ""),
-                        getattr(txn, "status", ""),
-                        getattr(txn, "timestamp", ""),
-                        None,  # week — computed later from matchup date ranges
-                        getattr(txn, "trader_team_key", None),
-                        getattr(txn, "tradee_team_key", None),
-                        getattr(txn, "faab_bid", None),
-                    ),
-                )
-
-                players = getattr(txn, "players", []) or []
-                for p in players:
-                    player = getattr(p, "player", p)
-                    td = getattr(player, "transaction_data", None)
+            with self.db.transaction():
+                records = 0
+                for txn in txns:
+                    txn_key = txn.transaction_key
                     self.db.execute(
-                        "INSERT OR REPLACE INTO transaction_player VALUES (?,?,?,?,?,?,?)",
+                        "INSERT OR REPLACE INTO transaction_record VALUES (?,?,?,?,?,?,?,?,?)",
                         (
                             txn_key,
-                            getattr(player, "player_key", ""),
-                            getattr(td, "source_type", "") if td else "",
-                            getattr(td, "source_team_key", None) if td else None,
-                            getattr(td, "destination_type", "") if td else "",
-                            getattr(td, "destination_team_key", None) if td else None,
-                            getattr(td, "type", "") if td else "",
+                            league_key,
+                            getattr(txn, "type", ""),
+                            getattr(txn, "status", ""),
+                            getattr(txn, "timestamp", ""),
+                            None,  # week — computed later from matchup date ranges
+                            getattr(txn, "trader_team_key", None),
+                            getattr(txn, "tradee_team_key", None),
+                            getattr(txn, "faab_bid", None),
                         ),
                     )
 
-                records += 1
+                    players = getattr(txn, "players", []) or []
+                    for p in players:
+                        player = getattr(p, "player", p)
+                        td = getattr(player, "transaction_data", None)
+                        self.db.execute(
+                            "INSERT OR REPLACE INTO transaction_player VALUES (?,?,?,?,?,?,?)",
+                            (
+                                txn_key,
+                                getattr(player, "player_key", ""),
+                                getattr(td, "source_type", "") if td else "",
+                                getattr(td, "source_team_key", None) if td else None,
+                                getattr(td, "destination_type", "") if td else "",
+                                getattr(td, "destination_team_key", None) if td else None,
+                                getattr(td, "type", "") if td else "",
+                            ),
+                        )
 
-            self._log_complete(league_key, "transactions", records=records)
+                    records += 1
+
+                self._log_complete(league_key, "transactions", records=records)
             print(f"  [done] transactions: {records} records")
 
         except Exception as e:
@@ -268,6 +271,7 @@ class YahooSync:
 
         self._log_start(league_key, "weekly", week)
         try:
+          with self.db.transaction():
             # 1. Scoreboard — matchup results
             scoreboard = query.get_league_scoreboard_by_week(week)
             self._wait()
@@ -406,7 +410,7 @@ class YahooSync:
                     print(f"    [warn] failed roster for team {team_id} week {week}: {e}")
 
             self._log_complete(league_key, "weekly", week, records=records)
-            print(f"  [done] week {week}: {records} records")
+          print(f"  [done] week {week}: {records} records")
 
         except Exception as e:
             self._log_fail(league_key, "weekly", week, error=str(e))

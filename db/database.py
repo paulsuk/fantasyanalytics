@@ -1,6 +1,7 @@
 """SQLite database wrapper for franchise data."""
 
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 
 _PROJECT_DIR = Path(__file__).resolve().parent.parent
@@ -28,6 +29,7 @@ class Database:
         _DATA_DIR.mkdir(exist_ok=True)
         self.path = _DATA_DIR / f"{franchise_slug}.db"
         self._conn: sqlite3.Connection | None = None
+        self._in_transaction = False
 
     @property
     def conn(self) -> sqlite3.Connection:
@@ -43,14 +45,36 @@ class Database:
         schema = _SCHEMA_FILE.read_text()
         self.conn.executescript(schema)
 
+    @contextmanager
+    def transaction(self):
+        """Batch multiple writes into a single commit.
+
+        Nested calls are safe — only the outermost commits/rolls back.
+        """
+        if self._in_transaction:
+            yield
+            return
+
+        self._in_transaction = True
+        try:
+            yield
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        finally:
+            self._in_transaction = False
+
     def execute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
         cursor = self.conn.execute(sql, params)
-        self.conn.commit()
+        if not self._in_transaction:
+            self.conn.commit()
         return cursor
 
     def executemany(self, sql: str, params_list: list[tuple]) -> sqlite3.Cursor:
         cursor = self.conn.executemany(sql, params_list)
-        self.conn.commit()
+        if not self._in_transaction:
+            self.conn.commit()
         return cursor
 
     def fetchone(self, sql: str, params: tuple = ()) -> sqlite3.Row | None:
