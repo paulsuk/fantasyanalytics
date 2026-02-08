@@ -6,14 +6,7 @@ from yahoo.client import YahooClient
 from config import get_franchises
 from baseball.data import MLBDataClient
 from basketball.data import NBADataClient
-
-
-def _name(obj) -> str:
-    """Decode a yfpy name field that may be bytes or str."""
-    name = obj if isinstance(obj, str) else obj.name if hasattr(obj, "name") else obj
-    if isinstance(name, bytes):
-        return name.decode("utf-8", errors="replace")
-    return str(name)
+from utils import decode_name, is_mlb_league
 
 
 def list_franchises():
@@ -74,7 +67,7 @@ def list_leagues(sport: str = None):
         print(f"\n  {sport_code.upper()} {ss.season} (game_key={ss.game_key}):")
         leagues = query.get_user_leagues_by_game_key(ss.game_key)
         for lg in leagues:
-            print(f"    {_name(lg.name)}")
+            print(f"    {decode_name(lg.name)}")
             print(f"      league_key={lg.league_key}  (id={lg.league_id})")
 
 
@@ -87,20 +80,20 @@ def show_league(sport: str):
     client = YahooClient()
 
     league = client.get_league(sport)
-    print(f"League: {_name(league.name)}")
+    print(f"League: {decode_name(league.name)}")
     print(f"Season: {league.season}")
     print(f"Current week: {league.current_week}")
 
     teams = client.get_teams(sport)
     print(f"\nTeams ({len(teams)}):")
     for team in teams:
-        print(f"  {_name(team.name)}")
+        print(f"  {decode_name(team.name)}")
 
     standings = client.get_standings(sport)
     print(f"\nStandings:")
     for team in standings.teams:
         ts = team.team_standings
-        print(f"  {ts.rank}. {_name(team.name)} ({ts.outcome_totals.wins}-{ts.outcome_totals.losses})")
+        print(f"  {ts.rank}. {decode_name(team.name)} ({ts.outcome_totals.wins}-{ts.outcome_totals.losses})")
 
 
 def show_mlb_stats():
@@ -181,8 +174,8 @@ def show_managers(slug: str):
             continue
         guid = getattr(mgr, "guid", "")
         nickname = getattr(mgr, "nickname", "")
-        team_name = _name(team.name)
-        configured = franchise.manager_name(guid)
+        team_name = decode_name(team.name)
+        configured = franchise.managerdecode_name(guid)
         if configured:
             print(f"    {configured:<20} {team_name:<30} (configured)")
         else:
@@ -204,7 +197,7 @@ def _refresh_manager_names(db, franchise):
         "SELECT DISTINCT manager_guid FROM team WHERE manager_guid != '' AND (manager_name IS NULL OR manager_name = '')"
     )
     for r in rows:
-        name = franchise.manager_name(r["manager_guid"])
+        name = franchise.managerdecode_name(r["manager_guid"])
         if name:
             db.execute(
                 "UPDATE team SET manager_name=? WHERE manager_guid=?",
@@ -282,18 +275,11 @@ def _cmd_value(args: list):
 
     pv = PlayerValue(db, league_key)
 
-    # Check if MLB (has batter/pitcher split)
-    has_pitching = db.fetchone(
-        "SELECT COUNT(*) as n FROM stat_category "
-        "WHERE league_key=? AND position_type='P' AND is_scoring_stat=1",
-        (league_key,),
-    )
-
     print(f"\n{'='*60}")
     print(f"Player Value — Week {week}")
     print(f"{'='*60}")
 
-    if has_pitching and has_pitching["n"] > 0:
+    if is_mlb_league(db, league_key):
         batters = pv.top_batters(week, limit=5)
         print(f"\n  Batter of the Week:")
         for i, p in enumerate(batters):

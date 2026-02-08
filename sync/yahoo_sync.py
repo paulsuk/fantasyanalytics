@@ -6,15 +6,7 @@ from datetime import datetime, timezone
 from config import get_franchise_by_slug, add_managers, Franchise
 from db import Database
 from yahoo.client import YahooClient
-
-
-def _name(obj) -> str:
-    """Decode a yfpy name field that may be bytes or str."""
-    if isinstance(obj, bytes):
-        return obj.decode("utf-8", errors="replace")
-    if hasattr(obj, "name"):
-        return _name(obj.name)
-    return str(obj)
+from utils import decode_name, build_team_key
 
 
 def _now_iso() -> str:
@@ -88,7 +80,7 @@ class YahooSync:
                 (
                     league_key,
                     league.season,
-                    _name(league.name),
+                    decode_name(league.name),
                     league.num_teams,
                     league.scoring_type,
                     len([s for s in settings.stat_categories.stats
@@ -141,7 +133,7 @@ class YahooSync:
                 mgr = mgrs[0] if mgrs else None
                 guid = getattr(mgr, "guid", "") if mgr else ""
                 nickname = getattr(mgr, "nickname", "") if mgr else ""
-                resolved_name = self.franchise.manager_name(guid) or ""
+                resolved_name = self.franchise.managerdecode_name(guid) or ""
 
                 self.db.execute(
                     "INSERT OR REPLACE INTO team VALUES (?,?,?,?,?,?,?,?,?)",
@@ -149,7 +141,7 @@ class YahooSync:
                         league_key,
                         team.team_key,
                         team.team_id,
-                        _name(team.name),
+                        decode_name(team.name),
                         guid,
                         nickname,
                         resolved_name,
@@ -308,7 +300,7 @@ class YahooSync:
             # 2. Team aggregate stats + per-category matchup results
             team_stats = {}
             for team_id in range(1, num_teams + 1):
-                team_key = f"{league_key.split('.')[0]}.l.{league_key.split('.')[-1]}.t.{team_id}"
+                team_key = build_team_key(league_key, team_id)
                 try:
                     stats = self.client.get_team_stats_by_week(query, team_key, week)
                     self._wait()
@@ -362,7 +354,7 @@ class YahooSync:
                     )
                     self._wait()
 
-                    team_key = f"{league_key.split('.')[0]}.l.{league_key.split('.')[-1]}.t.{team_id}"
+                    team_key = build_team_key(league_key, team_id)
                     for p in roster:
                         player_key = p.player_key
                         pos = p.selected_position
@@ -433,7 +425,7 @@ class YahooSync:
         to_add = {}
         for r in rows:
             guid = r["manager_guid"]
-            if not self.franchise.manager_name(guid):
+            if not self.franchise.managerdecode_name(guid):
                 nickname = r["manager_nickname"]
                 to_add[guid] = {"name": nickname, "short_name": nickname}
 

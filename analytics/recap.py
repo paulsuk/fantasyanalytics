@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from db import Database
 from analytics.value import PlayerValue, PlayerRank
 from analytics.teams import TeamProfiler, TeamProfile
+from utils import is_mlb_league
 
 
 @dataclass
@@ -59,15 +60,6 @@ class RecapAssembler:
             "SELECT * FROM league WHERE league_key=?", (self.league_key,)
         )
         return dict(row) if row else {}
-
-    def _is_mlb(self) -> bool:
-        """Check if this league has batter/pitcher position types."""
-        row = self.db.fetchone(
-            "SELECT COUNT(*) as n FROM stat_category "
-            "WHERE league_key=? AND position_type='P' AND is_scoring_stat=1",
-            (self.league_key,),
-        )
-        return row["n"] > 0 if row else False
 
     def _build_matchups(self, week: int) -> list[MatchupSummary]:
         matchups = self.db.fetchall(
@@ -166,7 +158,7 @@ class RecapAssembler:
     def build(self, week: int) -> WeeklyRecap:
         """Assemble a complete weekly recap."""
         league = self._league_info()
-        is_mlb = self._is_mlb()
+        is_mlb = is_mlb_league(self.db, self.league_key)
 
         recap = WeeklyRecap(
             league_key=self.league_key,
