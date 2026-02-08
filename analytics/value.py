@@ -50,7 +50,7 @@ class PlayerValue:
         return [c for c in self.categories if c["position_type"] == "P"]
 
     def _compute_rankings(self, week: int, cats: list[dict],
-                          limit: int = 10) -> list[PlayerRank]:
+                          limit: int | None = 10) -> list[PlayerRank]:
         """Compute z-score rankings for a set of categories over one week.
 
         Only includes players who were starters (not bench) and have at least
@@ -59,37 +59,39 @@ class PlayerValue:
         cat_ids = [c["stat_id"] for c in cats]
         cat_map = {c["stat_id"]: c for c in cats}
 
-        # Get all starter players for this week with their stats
-        players = self.db.fetchall(
-            "SELECT wr.player_key, wr.team_key, wr.selected_position, "
-            "       p.full_name, t.name as team_name, t.manager_name "
-            "FROM weekly_roster wr "
-            "JOIN player p ON wr.player_key = p.player_key "
-            "JOIN team t ON wr.league_key = t.league_key AND wr.team_key = t.team_key "
-            "WHERE wr.league_key=? AND wr.week=? AND wr.is_starter=1",
-            (self.league_key, week),
+        # Batch query: all starters + their stats in one go
+        placeholders = ",".join("?" * len(cat_ids))
+        rows = self.db.fetchall(
+            f"SELECT wr.player_key, wr.team_key, wr.selected_position, "
+            f"       p.full_name, t.name as team_name, t.manager_name, "
+            f"       pws.stat_id, pws.value "
+            f"FROM weekly_roster wr "
+            f"JOIN player p ON wr.player_key = p.player_key "
+            f"JOIN team t ON wr.league_key = t.league_key AND wr.team_key = t.team_key "
+            f"LEFT JOIN player_weekly_stat pws "
+            f"    ON wr.league_key = pws.league_key "
+            f"    AND wr.week = pws.week "
+            f"    AND wr.player_key = pws.player_key "
+            f"    AND pws.stat_id IN ({placeholders}) "
+            f"WHERE wr.league_key=? AND wr.week=? AND wr.is_starter=1",
+            (*cat_ids, self.league_key, week),
         )
 
-        # Gather stat values per player
+        # Group by player_key
         player_stats = {}
-        for pl in players:
-            stats = self.db.fetchall(
-                "SELECT stat_id, value FROM player_weekly_stat "
-                "WHERE league_key=? AND week=? AND player_key=? AND stat_id IN ({})".format(
-                    ",".join("?" * len(cat_ids))
-                ),
-                (self.league_key, week, pl["player_key"], *cat_ids),
-            )
-            vals = {s["stat_id"]: float(s["value"]) if s["value"] else 0.0 for s in stats}
+        for row in rows:
+            pkey = row["player_key"]
+            if pkey not in player_stats:
+                player_stats[pkey] = {"info": row, "vals": {}}
+            if row["stat_id"] is not None:
+                val = float(row["value"]) if row["value"] else 0.0
+                player_stats[pkey]["vals"][row["stat_id"]] = val
 
-            # Skip players with all zeros in target categories
-            if not any(vals.get(cid, 0) != 0 for cid in cat_ids):
-                continue
-
-            player_stats[pl["player_key"]] = {
-                "info": pl,
-                "vals": vals,
-            }
+        # Filter out players with all zeros in target categories
+        player_stats = {
+            pkey: ps for pkey, ps in player_stats.items()
+            if any(ps["vals"].get(cid, 0) != 0 for cid in cat_ids)
+        }
 
         if not player_stats:
             return []
@@ -139,7 +141,7 @@ class PlayerValue:
             ))
 
         results.sort(key=lambda r: r.z_total, reverse=True)
-        return results[:limit]
+        return results[:limit] if limit is not None else results
 
     def top_batters(self, week: int, limit: int = 10) -> list[PlayerRank]:
         """Top batters for a week by z-score over batting categories."""
