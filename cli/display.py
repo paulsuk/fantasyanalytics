@@ -2,8 +2,7 @@
 
 from yahoo.client import YahooClient
 from config import get_franchises
-from baseball.data import MLBDataClient
-from basketball.data import NBADataClient
+from sync.sport_data import MLBDataClient, NBADataClient
 from utils import decode_name, is_mlb_league
 from cli.resolve import resolve_league_key, parse_season_arg
 
