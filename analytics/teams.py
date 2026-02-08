@@ -219,8 +219,13 @@ class TeamProfiler:
             matchup_map[m["team_key_1"]] = m["team_key_2"]
             matchup_map[m["team_key_2"]] = m["team_key_1"]
 
-        # Player value for MVP/disappointment
+        # Player value for MVP/disappointment — compute ONCE for all teams
         pv = PlayerValue(self.db, self.league_key)
+        all_players = pv._compute_rankings(week, pv.categories, limit=None)
+        from collections import defaultdict
+        players_by_team: dict[str, list] = defaultdict(list)
+        for p in all_players:
+            players_by_team[p.team_key].append(p)
 
         profiles = []
         for s in current_standings:
@@ -251,10 +256,7 @@ class TeamProfiler:
                 profile.cat_weaknesses = [c[0] for c in sorted_cats[-3:]]
 
             # MVP / Disappointment (best and worst z-score player this week)
-            # Use all categories for the team's players
-            all_cats = pv.categories
-            team_players = pv._compute_rankings(week, all_cats, limit=100)
-            team_roster = [p for p in team_players if p.team_key == tk]
+            team_roster = players_by_team.get(tk, [])
             if team_roster:
                 mvp = team_roster[0]
                 profile.mvp_name = mvp.name
