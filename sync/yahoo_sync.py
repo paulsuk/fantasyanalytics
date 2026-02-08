@@ -134,7 +134,7 @@ class YahooSync:
                 mgr = mgrs[0] if mgrs else None
                 guid = getattr(mgr, "guid", "") if mgr else ""
                 nickname = getattr(mgr, "nickname", "") if mgr else ""
-                resolved_name = self.franchise.managerdecode_name(guid) or ""
+                resolved_name = self.franchise.manager_name(guid) or ""
 
                 self.db.execute(
                     "INSERT OR REPLACE INTO team VALUES (?,?,?,?,?,?,?,?,?)",
@@ -426,7 +426,7 @@ class YahooSync:
         to_add = {}
         for r in rows:
             guid = r["manager_guid"]
-            if not self.franchise.managerdecode_name(guid):
+            if not self.franchise.manager_name(guid):
                 nickname = r["manager_nickname"]
                 to_add[guid] = {"name": nickname, "short_name": nickname}
 

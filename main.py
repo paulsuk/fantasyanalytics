@@ -175,7 +175,7 @@ def show_managers(slug: str):
         guid = getattr(mgr, "guid", "")
         nickname = getattr(mgr, "nickname", "")
         team_name = decode_name(team.name)
-        configured = franchise.managerdecode_name(guid)
+        configured = franchise.manager_name(guid)
         if configured:
             print(f"    {configured:<20} {team_name:<30} (configured)")
         else:
@@ -197,7 +197,7 @@ def _refresh_manager_names(db, franchise):
         "SELECT DISTINCT manager_guid FROM team WHERE manager_guid != '' AND (manager_name IS NULL OR manager_name = '')"
     )
     for r in rows:
-        name = franchise.managerdecode_name(r["manager_guid"])
+        name = franchise.manager_name(r["manager_guid"])
         if name:
             db.execute(
                 "UPDATE team SET manager_name=? WHERE manager_guid=?",
