@@ -447,6 +447,55 @@ class YahooSync:
         print()
 
     # ------------------------------------------------------------------
+    # Transaction week backfill
+    # ------------------------------------------------------------------
+
+    def _backfill_transaction_weeks(self, league_key: str):
+        """Compute transaction_record.week from matchup date ranges."""
+        weeks = self.db.fetchall(
+            "SELECT DISTINCT week, week_start, week_end FROM matchup "
+            "WHERE league_key=? ORDER BY week",
+            (league_key,),
+        )
+        if not weeks:
+            return
+
+        txns = self.db.fetchall(
+            "SELECT transaction_key, timestamp FROM transaction_record "
+            "WHERE league_key=? AND week IS NULL AND timestamp IS NOT NULL "
+            "    AND timestamp != ''",
+            (league_key,),
+        )
+        if not txns:
+            return
+
+        updated = 0
+        with self.db.transaction():
+            for txn in txns:
+                # Convert Unix epoch to ISO date
+                try:
+                    ts_epoch = int(txn["timestamp"])
+                    ts_date = datetime.fromtimestamp(ts_epoch, tz=timezone.utc).strftime("%Y-%m-%d")
+                except (ValueError, TypeError):
+                    ts_date = txn["timestamp"]
+
+                # Find which week contains this date
+                assigned_week = weeks[-1]["week"]  # default to last week
+                for w in weeks:
+                    if w["week_start"] and ts_date <= w["week_end"]:
+                        assigned_week = w["week"]
+                        break
+
+                self.db.execute(
+                    "UPDATE transaction_record SET week=? WHERE transaction_key=?",
+                    (assigned_week, txn["transaction_key"]),
+                )
+                updated += 1
+
+        if updated:
+            print(f"  [done] backfilled week for {updated} transactions")
+
+    # ------------------------------------------------------------------
     # Full season sync
     # ------------------------------------------------------------------
 
@@ -503,6 +552,9 @@ class YahooSync:
         # Weekly data
         for week in weeks_to_sync:
             self.sync_week(query, league_key, week, num_teams, stat_categories)
+
+        # Backfill transaction weeks now that matchup dates are available
+        self._backfill_transaction_weeks(league_key)
 
         self._check_unconfigured_managers(league_key)
         print(f"Season {season} sync complete.\n")
