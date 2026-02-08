@@ -3,7 +3,7 @@
 import time
 from datetime import datetime, timezone
 
-from config import get_franchise_by_slug, add_managers, Franchise
+from config import get_franchise_by_slug, add_managers, Franchise, bench_positions
 from db import Database
 from yahoo.client import YahooClient
 from utils import decode_name, build_team_key
@@ -24,6 +24,7 @@ class YahooSync:
         self.db = Database(slug)
         self.db.initialize()
         self.delay = delay  # seconds between API calls
+        self._bench_positions = bench_positions(self.franchise.sport)
 
     def _wait(self):
         time.sleep(self.delay)
@@ -359,7 +360,7 @@ class YahooSync:
                         player_key = p.player_key
                         pos = p.selected_position
                         selected_pos = pos.position if pos else None
-                        is_bench = 1 if selected_pos in ("BN", "IL", "IL+", "NA", "DL") else 0
+                        is_bench = 1 if selected_pos in self._bench_positions else 0
 
                         # Player master record
                         name_obj = p.name
