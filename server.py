@@ -10,6 +10,7 @@ from db import Database
 from analytics.recap import RecapAssembler
 from analytics.teams import TeamProfiler
 from analytics.value import PlayerValue
+from analytics.history import ManagerHistory, LeagueRecords
 from utils import is_mlb_league
 
 app = FastAPI(title="Fantasy Analytics API", version="0.1.0")
@@ -206,5 +207,38 @@ def teams(
                 for p in profiles
             ],
         }
+    finally:
+        db.close()
+
+
+@app.get("/api/{slug}/managers")
+def managers(slug: str):
+    """Get all managers with cross-season records and H2H matrix."""
+    franchise = get_franchise_by_slug(slug)
+    if not franchise:
+        raise HTTPException(status_code=404, detail=f"Unknown franchise: {slug}")
+
+    db = Database(slug)
+    try:
+        history = ManagerHistory(db)
+        return {
+            "managers": history.managers(),
+            "h2h": history.h2h_matrix(),
+        }
+    finally:
+        db.close()
+
+
+@app.get("/api/{slug}/records")
+def records(slug: str):
+    """Get all-time league records."""
+    franchise = get_franchise_by_slug(slug)
+    if not franchise:
+        raise HTTPException(status_code=404, detail=f"Unknown franchise: {slug}")
+
+    db = Database(slug)
+    try:
+        lr = LeagueRecords(db)
+        return lr.records()
     finally:
         db.close()
