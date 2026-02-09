@@ -253,12 +253,16 @@ class LeagueRecords:
         )
 
         # Track per-manager streaks across all seasons
-        # guid -> {current_type, current_count, name}
+        # guid -> {type, count, name} for win/loss streaks
         active: dict[str, dict] = {}
+        # guid -> {count, name} for undefeated streaks (W or T continues, L breaks)
+        undefeated: dict[str, dict] = {}
         best_win = {"manager": "", "streak": 0}
         best_loss = {"manager": "", "streak": 0}
+        best_undefeated = {"manager": "", "streak": 0}
 
         def _check(guid: str, name: str, result: str):
+            # Win/loss streaks
             if guid not in active:
                 active[guid] = {"type": None, "count": 0, "name": name}
             a = active[guid]
@@ -276,6 +280,19 @@ class LeagueRecords:
                 best_loss["streak"] = a["count"]
                 best_loss["manager"] = name
 
+            # Undefeated streak (W or T continues, L resets)
+            if guid not in undefeated:
+                undefeated[guid] = {"count": 0, "name": name}
+            u = undefeated[guid]
+            u["name"] = name
+            if result == "L":
+                u["count"] = 0
+            else:
+                u["count"] += 1
+                if u["count"] > best_undefeated["streak"]:
+                    best_undefeated["streak"] = u["count"]
+                    best_undefeated["manager"] = name
+
         for r in rows:
             if r["is_tied"]:
                 _check(r["guid_1"], r["name_1"], "T")
@@ -290,6 +307,7 @@ class LeagueRecords:
         return {
             "longest_win_streak": best_win,
             "longest_loss_streak": best_loss,
+            "longest_undefeated_streak": best_undefeated,
         }
 
     def _matchup_records(self) -> dict:
