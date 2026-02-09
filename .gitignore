@@ -12,9 +12,7 @@ venv/
 *.json
 !package.json
 
-# Database
-data/
-*.db
+# Database (data/ committed for Cloud Run deployment)
 
 # Claude Code
 .context/

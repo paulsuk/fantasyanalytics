@@ -110,23 +110,23 @@ def show_mlb_stats():
         print("No batting stats available (season may not have started)")
 
 
-def show_nba_stats():
-    """Show recent game logs for a sample player."""
+def show_nba_stats(player_name: str = "LeBron James"):
+    """Show recent game logs for a player."""
     print(f"\n{'='*50}")
     print("NBA Data — Player Game Logs")
     print(f"{'='*50}")
 
     nba = NBADataClient()
-    player_id = nba.get_player_id("LeBron James")
+    player_id = nba.get_player_id(player_name)
     if player_id:
         logs = nba.get_player_game_logs(player_id)
         if not logs.empty:
             cols = ["GAME_DATE", "MATCHUP", "PTS", "REB", "AST", "STL", "BLK"]
             available = [c for c in cols if c in logs.columns]
-            print(f"LeBron James — last 5 games:")
+            print(f"{player_name} — last 5 games:")
             print(logs[available].head(5).to_string(index=False))
     else:
-        print("Player not found")
+        print(f"Player not found: {player_name}")
 
 
 def sync_command(slug: str, season: int = None, incremental: bool = False):

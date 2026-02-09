@@ -16,7 +16,7 @@ Usage:
   python main.py leagues [mlb|nba]              — List your current-season leagues
   python main.py yahoo mlb|nba                  — Show league info + standings
   python main.py mlb                            — FanGraphs batting leaders
-  python main.py nba                            — NBA player game logs
+  python main.py nba [player name]               — NBA player game logs
 
   python main.py sync <slug>                    — Sync all seasons for a franchise
   python main.py sync <slug> --season <year>    — Sync one season
@@ -52,7 +52,8 @@ def main():
     elif cmd == "mlb":
         show_mlb_stats()
     elif cmd == "nba":
-        show_nba_stats()
+        player_name = " ".join(args[1:]) if len(args) > 1 else "LeBron James"
+        show_nba_stats(player_name)
     elif cmd == "sync" and len(args) > 1:
         slug = args[1]
         season = None
