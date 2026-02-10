@@ -39,10 +39,13 @@ mlb:
     AM6DQC4TJQ2WMDNRQ4IEKDJJY4:
       name: Courtney Smith
       short_name: Courtney
+  former_managers:
     WPRMDSUYTFHE6CQO4IR5N7BUMM:
-      name: Mari
+      name: Mari Graham
       short_name: Mari
-  former_managers: {}
+    5BKUZI2G6POWJN3UPQMSIUKLK4:
+      name: Ian
+      short_name: Ian
 nba:
 - name: TK Fiji Fantasy
   slug: basketball
@@ -92,37 +95,37 @@ nba:
     APW3A5NLSYBLJS5FODVWZ6RQG4:
       name: Oliver Nadzieja
       short_name: Oliver
+  former_managers:
     NIDQUZUF2PLNA63SCNEIQLHEAE:
-      name: luke
-      short_name: luke
+      name: Luke
+      short_name: Luke
     72TWWD3BMT4BDJG5NBZZN4OLCU:
-      name: Michael
+      name: Michael Boyadjian
       short_name: Michael
     OT2H2DLCZ25QSGEZURI627VRHQ:
-      name: perrychan38
-      short_name: perrychan38
+      name: Perry Chan
+      short_name: Perry
     WS2FLLDL5ZCAN7HJOXRX6M4LDM:
-      name: Luca
+      name: Luca Moroti
       short_name: Luca
     P6UUYNICORI6ST2AZT2USZ2DUY:
-      name: Maxime
+      name: Maxime Vilder
       short_name: Maxime
     F6D2PMTJ2KFFNCAHHIGNFRVFZA:
-      name: Uzay
+      name: Uzay Syed
       short_name: Uzay
     J7HGUQORCHQVRMAH27BQMKZ7EI:
-      name: Tales
+      name: Tales Scopinho
       short_name: Tales
     2E3TO7W7MDJGQQPMVLYTKWU3DQ:
-      name: tanner
-      short_name: tanner
+      name: Tanner
+      short_name: Tanner
     L3F4KXBW3MBTSOTRUNDROHPKRE:
-      name: Ian
+      name: Ian Armour
       short_name: Ian
     XJTDKZFRVLSRGMGLYK4H5I6BTQ:
-      name: William
+      name: William Jereza
       short_name: William
     L3C4CA6IB4TLCHZSRUDHAADWG4:
       name: Andrew
       short_name: Andrew
-  former_managers: {}

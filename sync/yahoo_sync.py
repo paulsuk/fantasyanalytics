@@ -591,8 +591,8 @@ class YahooSync:
             for r in cat_rows
         ]
 
-        # Sync any unsynced weeks up to current
-        end = current_week if league_row["is_finished"] else current_week
+        # Sync completed weeks (current_week is the in-progress week per Yahoo)
+        end = league_row["end_week"] if league_row["is_finished"] else current_week - 1
         for week in range(1, end + 1):
             self.sync_week(query, league_key, week, num_teams, stat_categories)
 

@@ -1,13 +1,16 @@
 """Cross-season manager history and league records."""
 
+from config import Franchise
 from db import Database
 
 
 class ManagerHistory:
     """Cross-season manager stats and H2H records for a franchise."""
 
-    def __init__(self, db: Database):
+    def __init__(self, db: Database, franchise: Franchise):
         self.db = db
+        self._franchise = franchise
+        self._current_guids = franchise.current_manager_guids
 
     def _load_manager_teams(self) -> dict[str, list[dict]]:
         """Map manager_guid -> list of {league_key, season, team_key, team_name}."""
@@ -54,10 +57,11 @@ class ManagerHistory:
         # Aggregate W-L-T per manager guid (regular season only)
         records: dict[str, dict] = {}
         for guid, teams in manager_teams.items():
-            name = teams[0]["manager_name"] or guid
+            name = self._franchise.manager_name(guid) or teams[0]["manager_name"] or guid
             records[guid] = {
                 "guid": guid,
                 "name": name,
+                "is_current": guid in self._current_guids,
                 "seasons": sorted(set(t["season"] for t in teams)),
                 "wins": 0, "losses": 0, "ties": 0,
                 "playoff_wins": 0, "playoff_losses": 0,
@@ -66,11 +70,27 @@ class ManagerHistory:
                 "worst_finish": None,
             }
 
-        # Build team_key -> guid lookup
+        # Build team_key -> guid lookup and team_key -> team info
         tk_to_guid: dict[str, str] = {}
+        tk_to_info: dict[str, dict] = {}
         for guid, teams in manager_teams.items():
             for t in teams:
                 tk_to_guid[t["team_key"]] = guid
+                tk_to_info[t["team_key"]] = {
+                    "season": t["season"],
+                    "team_name": t["team_name"],
+                }
+
+        # Per-season per-team records
+        season_records: dict[str, dict[int, dict]] = {}  # guid -> {season -> {w,l,t,team_name}}
+        for guid, teams in manager_teams.items():
+            season_records[guid] = {}
+            for t in teams:
+                season_records[guid][t["season"]] = {
+                    "season": t["season"],
+                    "team_name": t["team_name"],
+                    "wins": 0, "losses": 0, "ties": 0,
+                }
 
         for m in matchups:
             g1, g2 = m["guid_1"], m["guid_2"]
@@ -78,6 +98,8 @@ class ManagerHistory:
                 continue
 
             is_playoff = m["is_playoffs"] or m["is_consolation"]
+
+            season = m["season"]
 
             if is_playoff:
                 if m["is_tied"]:
@@ -92,12 +114,24 @@ class ManagerHistory:
                 if m["is_tied"]:
                     records[g1]["ties"] += 1
                     records[g2]["ties"] += 1
+                    if season in season_records.get(g1, {}):
+                        season_records[g1][season]["ties"] += 1
+                    if season in season_records.get(g2, {}):
+                        season_records[g2][season]["ties"] += 1
                 elif m["winner_team_key"] == m["team_key_1"]:
                     records[g1]["wins"] += 1
                     records[g2]["losses"] += 1
+                    if season in season_records.get(g1, {}):
+                        season_records[g1][season]["wins"] += 1
+                    if season in season_records.get(g2, {}):
+                        season_records[g2][season]["losses"] += 1
                 else:
                     records[g2]["wins"] += 1
                     records[g1]["losses"] += 1
+                    if season in season_records.get(g2, {}):
+                        season_records[g2][season]["wins"] += 1
+                    if season in season_records.get(g1, {}):
+                        season_records[g1][season]["losses"] += 1
 
         # Championships and finishes from final standings per season
         leagues = self.db.fetchall("SELECT league_key, season, end_week FROM league")
@@ -140,6 +174,11 @@ class ManagerHistory:
                     records[guid]["worst_finish"] = max(worst, finish) if worst else finish
                     if finish == 1:
                         records[guid]["championships"] += 1
+
+        # Attach per-season breakdowns
+        for guid, rec in records.items():
+            sr = season_records.get(guid, {})
+            rec["season_records"] = sorted(sr.values(), key=lambda x: x["season"])
 
         result = sorted(records.values(), key=lambda r: (r["wins"], -r["losses"]), reverse=True)
         return result
@@ -213,8 +252,8 @@ class LeagueRecords:
             order = "DESC" if higher_is_better else "ASC"
 
             row = self.db.fetchone(
-                f"SELECT tws.value, tws.week, t.manager_name, l.season, "
-                f"       sc.display_name "
+                f"SELECT tws.value, tws.week, t.manager_name, t.name AS team_name, "
+                f"       l.season, sc.display_name "
                 f"FROM team_weekly_score tws "
                 f"JOIN team t ON tws.league_key = t.league_key AND tws.team_key = t.team_key "
                 f"JOIN league l ON tws.league_key = l.league_key "
@@ -229,6 +268,7 @@ class LeagueRecords:
                     "category": dn,
                     "value": row["value"],
                     "manager": row["manager_name"],
+                    "team_name": row["team_name"],
                     "season": row["season"],
                     "week": row["week"],
                     "higher_is_better": higher_is_better,
@@ -241,8 +281,8 @@ class LeagueRecords:
         # Get all matchups ordered by season + week per team
         rows = self.db.fetchall(
             "SELECT m.team_key_1, m.team_key_2, m.winner_team_key, m.is_tied, "
-            "       t1.manager_guid AS guid_1, t1.manager_name AS name_1, "
-            "       t2.manager_guid AS guid_2, t2.manager_name AS name_2, "
+            "       t1.manager_guid AS guid_1, t1.manager_name AS name_1, t1.name AS team_name_1, "
+            "       t2.manager_guid AS guid_2, t2.manager_name AS name_2, t2.name AS team_name_2, "
             "       l.season, m.week "
             "FROM matchup m "
             "JOIN team t1 ON m.league_key = t1.league_key AND m.team_key_1 = t1.team_key "
@@ -253,20 +293,18 @@ class LeagueRecords:
         )
 
         # Track per-manager streaks across all seasons
-        # guid -> {type, count, name} for win/loss streaks
         active: dict[str, dict] = {}
-        # guid -> {count, name} for undefeated streaks (W or T continues, L breaks)
         undefeated: dict[str, dict] = {}
-        best_win = {"manager": "", "streak": 0}
-        best_loss = {"manager": "", "streak": 0}
-        best_undefeated = {"manager": "", "streak": 0}
+        best_win = {"manager": "", "team_name": "", "streak": 0}
+        best_loss = {"manager": "", "team_name": "", "streak": 0}
+        best_undefeated = {"manager": "", "team_name": "", "streak": 0}
 
-        def _check(guid: str, name: str, result: str):
-            # Win/loss streaks
+        def _check(guid: str, name: str, team_name: str, result: str):
             if guid not in active:
-                active[guid] = {"type": None, "count": 0, "name": name}
+                active[guid] = {"type": None, "count": 0, "name": name, "team_name": team_name}
             a = active[guid]
             a["name"] = name
+            a["team_name"] = team_name
             if result == a["type"]:
                 a["count"] += 1
             else:
@@ -276,15 +314,17 @@ class LeagueRecords:
             if result == "W" and a["count"] > best_win["streak"]:
                 best_win["streak"] = a["count"]
                 best_win["manager"] = name
+                best_win["team_name"] = team_name
             elif result == "L" and a["count"] > best_loss["streak"]:
                 best_loss["streak"] = a["count"]
                 best_loss["manager"] = name
+                best_loss["team_name"] = team_name
 
-            # Undefeated streak (W or T continues, L resets)
             if guid not in undefeated:
-                undefeated[guid] = {"count": 0, "name": name}
+                undefeated[guid] = {"count": 0, "name": name, "team_name": team_name}
             u = undefeated[guid]
             u["name"] = name
+            u["team_name"] = team_name
             if result == "L":
                 u["count"] = 0
             else:
@@ -292,17 +332,18 @@ class LeagueRecords:
                 if u["count"] > best_undefeated["streak"]:
                     best_undefeated["streak"] = u["count"]
                     best_undefeated["manager"] = name
+                    best_undefeated["team_name"] = team_name
 
         for r in rows:
             if r["is_tied"]:
-                _check(r["guid_1"], r["name_1"], "T")
-                _check(r["guid_2"], r["name_2"], "T")
+                _check(r["guid_1"], r["name_1"], r["team_name_1"], "T")
+                _check(r["guid_2"], r["name_2"], r["team_name_2"], "T")
             elif r["winner_team_key"] == r["team_key_1"]:
-                _check(r["guid_1"], r["name_1"], "W")
-                _check(r["guid_2"], r["name_2"], "L")
+                _check(r["guid_1"], r["name_1"], r["team_name_1"], "W")
+                _check(r["guid_2"], r["name_2"], r["team_name_2"], "L")
             else:
-                _check(r["guid_2"], r["name_2"], "W")
-                _check(r["guid_1"], r["name_1"], "L")
+                _check(r["guid_2"], r["name_2"], r["team_name_2"], "W")
+                _check(r["guid_1"], r["name_1"], r["team_name_1"], "L")
 
         return {
             "longest_win_streak": best_win,
@@ -314,7 +355,8 @@ class LeagueRecords:
         """Biggest blowout and closest match."""
         rows = self.db.fetchall(
             "SELECT m.cats_won_1, m.cats_won_2, m.cats_tied, m.is_tied, "
-            "       t1.manager_name AS manager_1, t2.manager_name AS manager_2, "
+            "       t1.manager_name AS manager_1, t1.name AS team_name_1, "
+            "       t2.manager_name AS manager_2, t2.name AS team_name_2, "
             "       l.season, m.week "
             "FROM matchup m "
             "JOIN team t1 ON m.league_key = t1.league_key AND m.team_key_1 = t1.team_key "
@@ -334,26 +376,25 @@ class LeagueRecords:
 
             if margin > max_margin:
                 max_margin = margin
-                winner = r["manager_1"] if c1 > c2 else r["manager_2"]
-                loser = r["manager_2"] if c1 > c2 else r["manager_1"]
+                is_1 = c1 > c2
                 biggest_blowout = {
-                    "winner": winner,
-                    "loser": loser,
+                    "winner": r["manager_1"] if is_1 else r["manager_2"],
+                    "loser": r["manager_2"] if is_1 else r["manager_1"],
+                    "winner_team": r["team_name_1"] if is_1 else r["team_name_2"],
+                    "loser_team": r["team_name_2"] if is_1 else r["team_name_1"],
                     "score": f"{max(c1,c2)}-{min(c1,c2)}-{r['cats_tied']}",
                     "season": r["season"],
                     "week": r["week"],
                 }
 
-            if 0 < margin < min_margin or (margin == 0 and not r["is_tied"]):
-                pass  # ties with margin 0 are actual ties, skip
-
             if margin > 0 and margin < min_margin:
                 min_margin = margin
-                winner = r["manager_1"] if c1 > c2 else r["manager_2"]
-                loser = r["manager_2"] if c1 > c2 else r["manager_1"]
+                is_1 = c1 > c2
                 closest_match = {
-                    "winner": winner,
-                    "loser": loser,
+                    "winner": r["manager_1"] if is_1 else r["manager_2"],
+                    "loser": r["manager_2"] if is_1 else r["manager_1"],
+                    "winner_team": r["team_name_1"] if is_1 else r["team_name_2"],
+                    "loser_team": r["team_name_2"] if is_1 else r["team_name_1"],
                     "score": f"{max(c1,c2)}-{min(c1,c2)}-{r['cats_tied']}",
                     "season": r["season"],
                     "week": r["week"],

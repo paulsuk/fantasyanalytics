@@ -65,6 +65,11 @@ class Franchise:
         return mgr.get("short_name") if mgr else None
 
     @property
+    def current_manager_guids(self) -> set[str]:
+        """GUIDs of currently active managers."""
+        return set(self._managers.keys())
+
+    @property
     def all_managers(self) -> dict[str, dict]:
         """All managers (active + former)."""
         return {**self._managers, **self._former_managers}

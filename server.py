@@ -220,7 +220,7 @@ def managers(slug: str):
 
     db = Database(slug)
     try:
-        history = ManagerHistory(db)
+        history = ManagerHistory(db, franchise)
         return {
             "managers": history.managers(),
             "h2h": history.h2h_matrix(),

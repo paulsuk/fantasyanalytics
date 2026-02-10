@@ -20,10 +20,14 @@ def build_team_key(league_key: str, team_id: int) -> str:
 
 
 def is_mlb_league(db, league_key: str) -> bool:
-    """Check if a league has batter/pitcher splits (i.e., is MLB)."""
+    """Check if a league has batter/pitcher splits (i.e., is MLB).
+
+    MLB has both 'B' (Batter) and 'P' (Pitcher) position types.
+    NBA uses 'P' (Player) for all stats, so checking for 'B' is the key differentiator.
+    """
     row = db.fetchone(
         "SELECT COUNT(*) as n FROM stat_category "
-        "WHERE league_key=? AND position_type='P' AND is_scoring_stat=1",
+        "WHERE league_key=? AND position_type='B' AND is_scoring_stat=1",
         (league_key,),
     )
     return row["n"] > 0 if row else False
