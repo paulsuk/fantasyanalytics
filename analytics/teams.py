@@ -2,6 +2,17 @@
 
 from dataclasses import dataclass, field
 from db import Database
+from db.queries import (
+    get_all_teams,
+    get_team_info,
+    get_matchups_through_week,
+    get_team_category_results,
+    get_team_matchup_history,
+    get_cross_season_h2h,
+    get_current_week_matchups,
+    get_recent_adds,
+    get_recent_drops,
+)
 from analytics.value import PlayerValue
 
 
@@ -52,10 +63,7 @@ class TeamProfiler:
         Returns list of {team_key, team_name, manager, wins, losses, ties, rank}
         sorted by wins desc, then losses asc.
         """
-        teams = self.db.fetchall(
-            "SELECT team_key, name, manager_name FROM team WHERE league_key=?",
-            (self.league_key,),
-        )
+        teams = get_all_teams(self.db, self.league_key)
 
         records = {}
         for t in teams:
@@ -66,12 +74,7 @@ class TeamProfiler:
                 "wins": 0, "losses": 0, "ties": 0,
             }
 
-        matchups = self.db.fetchall(
-            "SELECT team_key_1, team_key_2, cats_won_1, cats_won_2, "
-            "       cats_tied, winner_team_key, is_tied "
-            "FROM matchup WHERE league_key=? AND week<=?",
-            (self.league_key, through_week),
-        )
+        matchups = get_matchups_through_week(self.db, self.league_key, through_week)
 
         for m in matchups:
             tk1, tk2 = m["team_key_1"], m["team_key_2"]
@@ -99,16 +102,8 @@ class TeamProfiler:
 
     def _team_category_record(self, team_key: str, through_week: int) -> dict[str, dict]:
         """Per-category W-L record for a team (how many weeks they won each cat)."""
-        rows = self.db.fetchall(
-            "SELECT mc.stat_id, sc.display_name, mc.winner_team_key "
-            "FROM matchup_category mc "
-            "JOIN matchup m ON mc.league_key=m.league_key AND mc.week=m.week "
-            "    AND mc.matchup_id=m.matchup_id "
-            "JOIN stat_category sc ON mc.league_key=sc.league_key AND mc.stat_id=sc.stat_id "
-            "WHERE mc.league_key=? AND mc.week<=? "
-            "    AND (m.team_key_1=? OR m.team_key_2=?) "
-            "    AND sc.is_scoring_stat=1",
-            (self.league_key, through_week, team_key, team_key),
+        rows = get_team_category_results(
+            self.db, self.league_key, team_key, through_week
         )
 
         cats = {}
@@ -127,11 +122,8 @@ class TeamProfiler:
 
     def _recent_form(self, team_key: str, through_week: int, n: int = 3) -> tuple[list[str], int]:
         """Last N matchup results and current streak."""
-        matchups = self.db.fetchall(
-            "SELECT week, winner_team_key, is_tied FROM matchup "
-            "WHERE league_key=? AND week<=? AND (team_key_1=? OR team_key_2=?) "
-            "ORDER BY week DESC",
-            (self.league_key, through_week, team_key, team_key),
+        matchups = get_team_matchup_history(
+            self.db, self.league_key, team_key, through_week
         )
 
         results = []
@@ -163,12 +155,7 @@ class TeamProfiler:
 
     def _h2h_record(self, team_key: str, opponent_key: str) -> str:
         """All-time H2H record vs an opponent across all synced seasons."""
-        matchups = self.db.fetchall(
-            "SELECT winner_team_key, is_tied FROM matchup "
-            "WHERE league_key IN (SELECT league_key FROM league) "
-            "    AND ((team_key_1=? AND team_key_2=?) OR (team_key_1=? AND team_key_2=?))",
-            (team_key, opponent_key, opponent_key, team_key),
-        )
+        matchups = get_cross_season_h2h(self.db, team_key, opponent_key)
         w, l, t = 0, 0, 0
         for m in matchups:
             if m["is_tied"]:
@@ -181,26 +168,9 @@ class TeamProfiler:
 
     def _recent_transactions(self, team_key: str, last_n: int = 5) -> tuple[list[str], list[str]]:
         """Recent adds and drops for a team."""
-        adds = self.db.fetchall(
-            "SELECT p.full_name FROM transaction_player tp "
-            "JOIN transaction_record tr ON tp.transaction_key=tr.transaction_key "
-            "JOIN player p ON tp.player_key=p.player_key "
-            "WHERE tr.league_key=? AND tp.destination_team_key=? AND tp.type='add' "
-            "ORDER BY tr.timestamp DESC LIMIT ?",
-            (self.league_key, team_key, last_n),
-        )
-        drops = self.db.fetchall(
-            "SELECT p.full_name FROM transaction_player tp "
-            "JOIN transaction_record tr ON tp.transaction_key=tr.transaction_key "
-            "JOIN player p ON tp.player_key=p.player_key "
-            "WHERE tr.league_key=? AND tp.source_team_key=? AND tp.type='drop' "
-            "ORDER BY tr.timestamp DESC LIMIT ?",
-            (self.league_key, team_key, last_n),
-        )
-        return (
-            [r["full_name"] for r in adds],
-            [r["full_name"] for r in drops],
-        )
+        adds = get_recent_adds(self.db, self.league_key, team_key, last_n)
+        drops = get_recent_drops(self.db, self.league_key, team_key, last_n)
+        return adds, drops
 
     def build_profiles(self, week: int) -> list[TeamProfile]:
         """Build full team profiles for power rankings as of a given week."""
@@ -210,11 +180,7 @@ class TeamProfiler:
 
         # Get current week's matchups for opponent info
         matchup_map = {}
-        matchups = self.db.fetchall(
-            "SELECT team_key_1, team_key_2 FROM matchup "
-            "WHERE league_key=? AND week=?",
-            (self.league_key, week),
-        )
+        matchups = get_current_week_matchups(self.db, self.league_key, week)
         for m in matchups:
             matchup_map[m["team_key_1"]] = m["team_key_2"]
             matchup_map[m["team_key_2"]] = m["team_key_1"]
@@ -275,10 +241,7 @@ class TeamProfiler:
             opp_key = matchup_map.get(tk)
             if opp_key:
                 profile.opponent_key = opp_key
-                opp = self.db.fetchone(
-                    "SELECT name, manager_name FROM team WHERE league_key=? AND team_key=?",
-                    (self.league_key, opp_key),
-                )
+                opp = get_team_info(self.db, self.league_key, opp_key)
                 if opp:
                     profile.opponent_name = opp["name"]
                 profile.h2h_record = self._h2h_record(tk, opp_key)

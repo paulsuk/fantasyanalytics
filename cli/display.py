@@ -4,6 +4,7 @@ from yahoo.client import YahooClient
 from config import get_franchises
 from sync.sport_data import MLBDataClient, NBADataClient
 from utils import decode_name, is_mlb_league
+from db.queries import get_league_week_info
 from cli.resolve import resolve_league_key, parse_season_arg
 
 
@@ -205,8 +206,7 @@ def cmd_value(args: list):
         return
 
     if not week:
-        row = db.fetchone("SELECT current_week, end_week, is_finished FROM league WHERE league_key=?",
-                          (league_key,))
+        row = get_league_week_info(db, league_key)
         week = row["end_week"] if row["is_finished"] else max(row["current_week"] - 1, 1)
 
     pv = PlayerValue(db, league_key)
@@ -252,8 +252,7 @@ def cmd_teams(args: list):
         return
 
     if not week:
-        row = db.fetchone("SELECT current_week, end_week, is_finished FROM league WHERE league_key=?",
-                          (league_key,))
+        row = get_league_week_info(db, league_key)
         week = row["end_week"] if row["is_finished"] else max(row["current_week"] - 1, 1)
 
     profiler = TeamProfiler(db, league_key)
@@ -301,8 +300,7 @@ def cmd_recap(args: list):
         return
 
     if not week:
-        row = db.fetchone("SELECT current_week, end_week, is_finished FROM league WHERE league_key=?",
-                          (league_key,))
+        row = get_league_week_info(db, league_key)
         week = row["end_week"] if row["is_finished"] else max(row["current_week"] - 1, 1)
 
     assembler = RecapAssembler(db, league_key)

@@ -2,6 +2,17 @@
 
 from config import Franchise
 from db import Database
+from db.queries import (
+    get_all_manager_teams,
+    get_all_matchups_with_manager_guids,
+    get_all_leagues_with_end_week,
+    get_league_team_keys,
+    get_regular_season_matchups,
+    get_distinct_scoring_categories,
+    get_category_record_holder,
+    get_all_regular_season_matchups_with_managers,
+    get_all_regular_season_matchup_scores,
+)
 
 
 class ManagerHistory:
@@ -14,13 +25,7 @@ class ManagerHistory:
 
     def _load_manager_teams(self) -> dict[str, list[dict]]:
         """Map manager_guid -> list of {league_key, season, team_key, team_name}."""
-        rows = self.db.fetchall(
-            "SELECT t.manager_guid, t.manager_name, t.team_key, t.name AS team_name, "
-            "       l.league_key, l.season "
-            "FROM team t JOIN league l ON t.league_key = l.league_key "
-            "WHERE t.manager_guid IS NOT NULL "
-            "ORDER BY l.season"
-        )
+        rows = get_all_manager_teams(self.db)
         by_guid: dict[str, list[dict]] = {}
         for r in rows:
             guid = r["manager_guid"]
@@ -35,19 +40,9 @@ class ManagerHistory:
             })
         return by_guid
 
-    def _all_matchups_with_guids(self) -> list[dict]:
+    def _all_matchups_with_guids(self) -> list:
         """All matchups annotated with manager GUIDs."""
-        return self.db.fetchall(
-            "SELECT m.league_key, m.week, m.winner_team_key, m.is_tied, "
-            "       m.team_key_1, m.team_key_2, m.cats_won_1, m.cats_won_2, m.cats_tied, "
-            "       m.is_playoffs, m.is_consolation, "
-            "       t1.manager_guid AS guid_1, t2.manager_guid AS guid_2, "
-            "       l.season "
-            "FROM matchup m "
-            "JOIN team t1 ON m.league_key = t1.league_key AND m.team_key_1 = t1.team_key "
-            "JOIN team t2 ON m.league_key = t2.league_key AND m.team_key_2 = t2.team_key "
-            "JOIN league l ON m.league_key = l.league_key"
-        )
+        return get_all_matchups_with_manager_guids(self.db)
 
     def managers(self) -> list[dict]:
         """All managers with cross-season aggregate stats."""
@@ -134,23 +129,17 @@ class ManagerHistory:
                         season_records[g1][season]["losses"] += 1
 
         # Championships and finishes from final standings per season
-        leagues = self.db.fetchall("SELECT league_key, season, end_week FROM league")
+        leagues = get_all_leagues_with_end_week(self.db)
         for lg in leagues:
             lk, end_week = lg["league_key"], lg["end_week"]
-            teams = self.db.fetchall(
-                "SELECT team_key FROM team WHERE league_key=?", (lk,)
-            )
+            teams = get_league_team_keys(self.db, lk)
             # Compute standings from regular season matchups
             team_records: dict[str, dict] = {}
             for t in teams:
                 tk = t["team_key"]
                 team_records[tk] = {"w": 0, "l": 0}
 
-            reg_matchups = self.db.fetchall(
-                "SELECT team_key_1, team_key_2, winner_team_key, is_tied "
-                "FROM matchup WHERE league_key=? AND is_playoffs=0 AND is_consolation=0",
-                (lk,)
-            )
+            reg_matchups = get_regular_season_matchups(self.db, lk)
             for rm in reg_matchups:
                 tk1, tk2 = rm["team_key_1"], rm["team_key_2"]
                 if tk1 in team_records and tk2 in team_records:
@@ -229,21 +218,7 @@ class LeagueRecords:
 
     def _category_records(self) -> list[dict]:
         """Best single-week values for each scoring category."""
-        # Get all scoring stat categories (use latest season's categories as reference)
-        cats = self.db.fetchall(
-            "SELECT DISTINCT sc.stat_id, sc.display_name, sc.sort_order "
-            "FROM stat_category sc "
-            "JOIN league l ON sc.league_key = l.league_key "
-            "WHERE sc.is_scoring_stat = 1 "
-            "ORDER BY sc.display_name"
-        )
-        # Deduplicate by display_name (same stat across seasons)
-        seen = set()
-        unique_cats = []
-        for c in cats:
-            if c["display_name"] not in seen:
-                seen.add(c["display_name"])
-                unique_cats.append(c)
+        unique_cats = get_distinct_scoring_categories(self.db)
 
         results = []
         for cat in unique_cats:
@@ -251,18 +226,7 @@ class LeagueRecords:
             higher_is_better = cat["sort_order"] == 1
             order = "DESC" if higher_is_better else "ASC"
 
-            row = self.db.fetchone(
-                f"SELECT tws.value, tws.week, t.manager_name, t.name AS team_name, "
-                f"       l.season, sc.display_name "
-                f"FROM team_weekly_score tws "
-                f"JOIN team t ON tws.league_key = t.league_key AND tws.team_key = t.team_key "
-                f"JOIN league l ON tws.league_key = l.league_key "
-                f"JOIN stat_category sc ON tws.league_key = sc.league_key "
-                f"    AND tws.stat_id = sc.stat_id "
-                f"WHERE sc.display_name = ? AND sc.is_scoring_stat = 1 "
-                f"ORDER BY tws.value {order} LIMIT 1",
-                (dn,),
-            )
+            row = get_category_record_holder(self.db, dn, order)
             if row:
                 results.append({
                     "category": dn,
@@ -278,19 +242,7 @@ class LeagueRecords:
 
     def _streaks(self) -> dict:
         """Longest win and loss streaks across all seasons."""
-        # Get all matchups ordered by season + week per team
-        rows = self.db.fetchall(
-            "SELECT m.team_key_1, m.team_key_2, m.winner_team_key, m.is_tied, "
-            "       t1.manager_guid AS guid_1, t1.manager_name AS name_1, t1.name AS team_name_1, "
-            "       t2.manager_guid AS guid_2, t2.manager_name AS name_2, t2.name AS team_name_2, "
-            "       l.season, m.week "
-            "FROM matchup m "
-            "JOIN team t1 ON m.league_key = t1.league_key AND m.team_key_1 = t1.team_key "
-            "JOIN team t2 ON m.league_key = t2.league_key AND m.team_key_2 = t2.team_key "
-            "JOIN league l ON m.league_key = l.league_key "
-            "WHERE m.is_playoffs = 0 AND m.is_consolation = 0 "
-            "ORDER BY l.season, m.week"
-        )
+        rows = get_all_regular_season_matchups_with_managers(self.db)
 
         # Track per-manager streaks across all seasons
         active: dict[str, dict] = {}
@@ -353,17 +305,7 @@ class LeagueRecords:
 
     def _matchup_records(self) -> dict:
         """Biggest blowout and closest match."""
-        rows = self.db.fetchall(
-            "SELECT m.cats_won_1, m.cats_won_2, m.cats_tied, m.is_tied, "
-            "       t1.manager_name AS manager_1, t1.name AS team_name_1, "
-            "       t2.manager_name AS manager_2, t2.name AS team_name_2, "
-            "       l.season, m.week "
-            "FROM matchup m "
-            "JOIN team t1 ON m.league_key = t1.league_key AND m.team_key_1 = t1.team_key "
-            "JOIN team t2 ON m.league_key = t2.league_key AND m.team_key_2 = t2.team_key "
-            "JOIN league l ON m.league_key = l.league_key "
-            "WHERE m.is_playoffs = 0 AND m.is_consolation = 0"
-        )
+        rows = get_all_regular_season_matchup_scores(self.db)
 
         biggest_blowout = None
         closest_match = None

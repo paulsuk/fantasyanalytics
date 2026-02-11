@@ -2,6 +2,13 @@
 
 from dataclasses import dataclass
 from db import Database
+from db.queries import (
+    get_scoring_categories,
+    get_weekly_roster_stats,
+    get_category_leaders,
+    get_add_transactions,
+    get_player_weekly_stats_sum,
+)
 
 
 @dataclass
@@ -34,13 +41,7 @@ class PlayerValue:
     def categories(self) -> list[dict]:
         """Scoring categories for this league (cached)."""
         if self._categories is None:
-            rows = self.db.fetchall(
-                "SELECT stat_id, name, display_name, sort_order, position_type "
-                "FROM stat_category "
-                "WHERE league_key=? AND is_scoring_stat=1",
-                (self.league_key,),
-            )
-            self._categories = [dict(r) for r in rows]
+            self._categories = get_scoring_categories(self.db, self.league_key)
         return self._categories
 
     def _batting_cats(self) -> list[dict]:
@@ -59,23 +60,7 @@ class PlayerValue:
         cat_ids = [c["stat_id"] for c in cats]
         cat_map = {c["stat_id"]: c for c in cats}
 
-        # Batch query: all starters + their stats in one go
-        placeholders = ",".join("?" * len(cat_ids))
-        rows = self.db.fetchall(
-            f"SELECT wr.player_key, wr.team_key, wr.selected_position, "
-            f"       p.full_name, t.name as team_name, t.manager_name, "
-            f"       pws.stat_id, pws.value "
-            f"FROM weekly_roster wr "
-            f"JOIN player p ON wr.player_key = p.player_key "
-            f"JOIN team t ON wr.league_key = t.league_key AND wr.team_key = t.team_key "
-            f"LEFT JOIN player_weekly_stat pws "
-            f"    ON wr.league_key = pws.league_key "
-            f"    AND wr.week = pws.week "
-            f"    AND wr.player_key = pws.player_key "
-            f"    AND pws.stat_id IN ({placeholders}) "
-            f"WHERE wr.league_key=? AND wr.week=? AND wr.is_starter=1",
-            (*cat_ids, self.league_key, week),
-        )
+        rows = get_weekly_roster_stats(self.db, self.league_key, week, cat_ids)
 
         # Group by player_key
         player_stats = {}
@@ -170,19 +155,8 @@ class PlayerValue:
             return []
 
         order = "DESC" if cat["sort_order"] == 1 else "ASC"
-        rows = self.db.fetchall(
-            f"SELECT pws.player_key, pws.value, p.full_name, "
-            f"       t.name as team_name, t.manager_name "
-            f"FROM player_weekly_stat pws "
-            f"JOIN player p ON pws.player_key = p.player_key "
-            f"JOIN weekly_roster wr ON pws.league_key = wr.league_key "
-            f"    AND pws.week = wr.week AND pws.player_key = wr.player_key "
-            f"JOIN team t ON wr.league_key = t.league_key AND wr.team_key = t.team_key "
-            f"WHERE pws.league_key=? AND pws.week=? AND pws.stat_id=? "
-            f"    AND wr.is_starter=1 AND pws.value IS NOT NULL "
-            f"ORDER BY CAST(pws.value AS REAL) {order} "
-            f"LIMIT ?",
-            (self.league_key, week, stat_id, limit),
+        rows = get_category_leaders(
+            self.db, self.league_key, week, stat_id, order, limit
         )
         return [
             {
@@ -201,19 +175,7 @@ class PlayerValue:
         Finds players added via transaction after since_week, then computes
         their cumulative z-score value from the week they were added.
         """
-        # Get add transactions with timestamps
-        adds = self.db.fetchall(
-            "SELECT tp.player_key, tr.week as add_week, tr.destination_team_key, "
-            "       p.full_name, t.name as team_name, t.manager_name "
-            "FROM transaction_player tp "
-            "JOIN transaction_record tr ON tp.transaction_key = tr.transaction_key "
-            "JOIN player p ON tp.player_key = p.player_key "
-            "LEFT JOIN team t ON tr.league_key = t.league_key "
-            "    AND tp.destination_team_key = t.team_key "
-            "WHERE tr.league_key=? AND tp.type='add' "
-            "    AND tp.source_type IN ('freeagents', 'waivers')",
-            (self.league_key,),
-        )
+        adds = get_add_transactions(self.db, self.league_key)
 
         if not adds:
             return []
@@ -226,13 +188,8 @@ class PlayerValue:
             if add_week is None or add_week < since_week:
                 continue
 
-            # Get their weekly stats since pickup
-            stats = self.db.fetchall(
-                "SELECT stat_id, SUM(CAST(value AS REAL)) as total "
-                "FROM player_weekly_stat "
-                "WHERE league_key=? AND player_key=? AND week>=? AND stat_id IN ({}) "
-                "GROUP BY stat_id".format(",".join("?" * len(cat_ids))),
-                (self.league_key, add["player_key"], add_week, *cat_ids),
+            stats = get_player_weekly_stats_sum(
+                self.db, self.league_key, add["player_key"], add_week, cat_ids
             )
             if not stats:
                 continue

@@ -7,11 +7,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import get_franchises, get_franchise_by_slug
 from db import Database
+from db.queries import get_league, get_latest_league, get_league_week_info, get_all_seasons
 from analytics.recap import RecapAssembler
 from analytics.teams import TeamProfiler
 from analytics.value import PlayerValue
 from analytics.history import ManagerHistory, LeagueRecords
-from utils import is_mlb_league
 
 app = FastAPI(title="Fantasy Analytics API", version="0.1.0")
 
@@ -38,12 +38,11 @@ def _resolve_league(slug: str, db: Database, season: int | None) -> str:
         league_key = franchise.league_key_for_season(season)
         if not league_key:
             raise HTTPException(status_code=404, detail=f"No league key for season {season}")
-        row = db.fetchone("SELECT league_key FROM league WHERE league_key=?", (league_key,))
-        if not row:
+        if not get_league(db, league_key):
             raise HTTPException(status_code=404, detail=f"No synced data for {slug} season {season}")
         return league_key
 
-    row = db.fetchone("SELECT league_key FROM league ORDER BY season DESC LIMIT 1")
+    row = get_latest_league(db)
     if not row:
         raise HTTPException(status_code=404, detail=f"No synced data for {slug}")
     return row["league_key"]
@@ -53,10 +52,7 @@ def _resolve_week(db: Database, league_key: str, week: int | None) -> int:
     """Resolve week number, defaulting to latest completed week."""
     if week:
         return week
-    row = db.fetchone(
-        "SELECT current_week, end_week, is_finished FROM league WHERE league_key=?",
-        (league_key,),
-    )
+    row = get_league_week_info(db, league_key)
     if not row:
         raise HTTPException(status_code=404, detail="League not found in DB")
     return row["end_week"] if row["is_finished"] else max(row["current_week"] - 1, 1)
@@ -94,10 +90,7 @@ def franchise_seasons(slug: str):
 
     db = Database(slug)
     try:
-        rows = db.fetchall(
-            "SELECT league_key, season, name, is_finished FROM league ORDER BY season DESC"
-        )
-        return [dict(r) for r in rows]
+        return get_all_seasons(db)
     finally:
         db.close()
 

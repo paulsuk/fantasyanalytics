@@ -2,6 +2,14 @@
 
 from dataclasses import dataclass, field
 from db import Database
+from db.queries import (
+    get_league,
+    get_team_info,
+    get_week_matchups,
+    get_matchup_categories,
+    get_matchup_dates,
+    get_week_transactions,
+)
 from analytics.value import PlayerValue, PlayerRank
 from analytics.teams import TeamProfiler, TeamProfile
 from utils import is_mlb_league
@@ -56,42 +64,22 @@ class RecapAssembler:
         self.league_key = league_key
 
     def _league_info(self) -> dict:
-        row = self.db.fetchone(
-            "SELECT * FROM league WHERE league_key=?", (self.league_key,)
-        )
-        return dict(row) if row else {}
+        return get_league(self.db, self.league_key) or {}
 
     def _build_matchups(self, week: int) -> list[MatchupSummary]:
-        matchups = self.db.fetchall(
-            "SELECT * FROM matchup WHERE league_key=? AND week=? ORDER BY matchup_id",
-            (self.league_key, week),
-        )
+        matchups = get_week_matchups(self.db, self.league_key, week)
 
         results = []
         for m in matchups:
-            t1 = self.db.fetchone(
-                "SELECT name, manager_name FROM team WHERE league_key=? AND team_key=?",
-                (self.league_key, m["team_key_1"]),
-            )
-            t2 = self.db.fetchone(
-                "SELECT name, manager_name FROM team WHERE league_key=? AND team_key=?",
-                (self.league_key, m["team_key_2"]),
-            )
-            winner = self.db.fetchone(
-                "SELECT name FROM team WHERE league_key=? AND team_key=?",
-                (self.league_key, m["winner_team_key"]),
+            t1 = get_team_info(self.db, self.league_key, m["team_key_1"])
+            t2 = get_team_info(self.db, self.league_key, m["team_key_2"])
+            winner = get_team_info(
+                self.db, self.league_key, m["winner_team_key"]
             ) if m["winner_team_key"] else None
 
             # Per-category details
-            cats = self.db.fetchall(
-                "SELECT mc.stat_id, sc.display_name, mc.team_1_value, "
-                "       mc.team_2_value, mc.winner_team_key "
-                "FROM matchup_category mc "
-                "JOIN stat_category sc ON mc.league_key=sc.league_key AND mc.stat_id=sc.stat_id "
-                "WHERE mc.league_key=? AND mc.week=? AND mc.matchup_id=? "
-                "    AND sc.is_scoring_stat=1 "
-                "ORDER BY sc.position_type, mc.stat_id",
-                (self.league_key, week, m["matchup_id"]),
+            cats = get_matchup_categories(
+                self.db, self.league_key, week, m["matchup_id"]
             )
 
             cat_details = []
@@ -127,33 +115,12 @@ class RecapAssembler:
 
     def _week_transactions(self, week: int) -> list[dict]:
         """Transactions that occurred during this week (by matchup dates)."""
-        m = self.db.fetchone(
-            "SELECT week_start, week_end FROM matchup WHERE league_key=? AND week=? LIMIT 1",
-            (self.league_key, week),
-        )
-        if not m:
+        dates = get_matchup_dates(self.db, self.league_key, week)
+        if not dates:
             return []
-
-        rows = self.db.fetchall(
-            "SELECT tr.type, tr.timestamp, tr.faab_bid, "
-            "       tp.player_key, tp.type as player_type, "
-            "       tp.destination_team_key, tp.source_team_key, "
-            "       p.full_name, "
-            "       dt.name as dest_team_name, dt.manager_name as dest_manager, "
-            "       st.name as src_team_name "
-            "FROM transaction_record tr "
-            "JOIN transaction_player tp ON tr.transaction_key=tp.transaction_key "
-            "JOIN player p ON tp.player_key=p.player_key "
-            "LEFT JOIN team dt ON tr.league_key=dt.league_key "
-            "    AND tp.destination_team_key=dt.team_key "
-            "LEFT JOIN team st ON tr.league_key=st.league_key "
-            "    AND tp.source_team_key=st.team_key "
-            "WHERE tr.league_key=? AND tr.timestamp >= ? AND tr.timestamp <= ? "
-            "ORDER BY tr.timestamp",
-            (self.league_key, m["week_start"], m["week_end"] + "T23:59:59"),
+        return get_week_transactions(
+            self.db, self.league_key, dates["week_start"], dates["week_end"]
         )
-
-        return [dict(r) for r in rows]
 
     def build(self, week: int) -> WeeklyRecap:
         """Assemble a complete weekly recap."""
@@ -170,13 +137,10 @@ class RecapAssembler:
         )
 
         # Week dates from first matchup
-        m = self.db.fetchone(
-            "SELECT week_start, week_end FROM matchup WHERE league_key=? AND week=? LIMIT 1",
-            (self.league_key, week),
-        )
-        if m:
-            recap.week_start = m["week_start"]
-            recap.week_end = m["week_end"]
+        dates = get_matchup_dates(self.db, self.league_key, week)
+        if dates:
+            recap.week_start = dates["week_start"]
+            recap.week_end = dates["week_end"]
 
         # Matchups
         recap.matchups = self._build_matchups(week)
