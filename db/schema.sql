@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS league (
     league_key      TEXT PRIMARY KEY,   -- e.g. "458.l.25845"
     season          INTEGER NOT NULL,
     name            TEXT,
+    sport           TEXT,               -- "mlb" or "nba"
     num_teams       INTEGER,
     scoring_type    TEXT,               -- "head" (H2H) or "roto"
     num_categories  INTEGER,

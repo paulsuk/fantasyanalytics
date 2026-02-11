@@ -3,8 +3,8 @@
 from yahoo.client import YahooClient
 from config import get_franchises
 from sync.sport_data import MLBDataClient, NBADataClient
-from utils import decode_name, is_mlb_league
-from db.queries import get_league_week_info
+from utils import decode_name
+from db.queries import get_league_week_info, get_league
 from cli.resolve import resolve_league_key, parse_season_arg
 
 
@@ -215,7 +215,8 @@ def cmd_value(args: list):
     print(f"Player Value — Week {week}")
     print(f"{'='*60}")
 
-    if is_mlb_league(db, league_key):
+    league_info = get_league(db, league_key)
+    if league_info and league_info.get("sport") == "mlb":
         batters = pv.top_batters(week, limit=5)
         print(f"\n  Batter of the Week:")
         for i, p in enumerate(batters):

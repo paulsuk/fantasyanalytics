@@ -44,6 +44,33 @@ class Database:
         """Create all tables from schema.sql if they don't exist."""
         schema = _SCHEMA_FILE.read_text()
         self.conn.executescript(schema)
+        self._migrate()
+
+    def _migrate(self):
+        """Run schema migrations for existing databases."""
+        columns = [row[1] for row in self.conn.execute("PRAGMA table_info(league)").fetchall()]
+        if "sport" not in columns:
+            self.conn.execute("ALTER TABLE league ADD COLUMN sport TEXT")
+            self.conn.commit()
+
+        # Backfill sport for existing leagues that have NULL sport
+        nulls = self.conn.execute(
+            "SELECT league_key FROM league WHERE sport IS NULL"
+        ).fetchall()
+        for row in nulls:
+            lk = row[0]
+            # Infer sport: MLB has position_type='B' (Batter), NBA does not
+            has_batters = self.conn.execute(
+                "SELECT COUNT(*) FROM stat_category "
+                "WHERE league_key=? AND position_type='B' AND is_scoring_stat=1",
+                (lk,),
+            ).fetchone()[0]
+            sport = "mlb" if has_batters > 0 else "nba"
+            self.conn.execute(
+                "UPDATE league SET sport=? WHERE league_key=?", (sport, lk)
+            )
+        if nulls:
+            self.conn.commit()
 
     @contextmanager
     def transaction(self):

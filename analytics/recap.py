@@ -12,7 +12,6 @@ from db.queries import (
 )
 from analytics.value import PlayerValue, PlayerRank
 from analytics.teams import TeamProfiler, TeamProfile
-from utils import is_mlb_league
 
 
 @dataclass
@@ -125,7 +124,7 @@ class RecapAssembler:
     def build(self, week: int) -> WeeklyRecap:
         """Assemble a complete weekly recap."""
         league = self._league_info()
-        is_mlb = is_mlb_league(self.db, self.league_key)
+        is_mlb = league.get("sport") == "mlb"
 
         recap = WeeklyRecap(
             league_key=self.league_key,

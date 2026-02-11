@@ -89,11 +89,12 @@ class YahooSync:
             with self.db.transaction():
                 # League table
                 self.db.execute(
-                    "INSERT OR REPLACE INTO league VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT OR REPLACE INTO league VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         league_key,
                         league.season,
                         decode_name(league.name),
+                        self.franchise.sport,
                         league.num_teams,
                         league.scoring_type,
                         len([s for s in settings.stat_categories.stats
