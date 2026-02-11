@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 from config import get_franchise_by_slug, add_managers, Franchise, bench_positions
 from db import Database
-from yahoo.client import YahooClient
+from sync.yahoo_client import YahooClient
 from utils import decode_name, build_team_key
 
 

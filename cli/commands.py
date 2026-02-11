@@ -1,6 +1,6 @@
 """CLI commands: sync, franchises, seasons, managers."""
 
-from yahoo.client import YahooClient
+from sync.yahoo_client import YahooClient
 from config import get_franchises
 from utils import decode_name
 
