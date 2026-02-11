@@ -1,23 +1,10 @@
-"""Central configuration: franchise and manager loading from franchises.yaml."""
+"""Franchise and manager loading from franchises.yaml."""
 
 from pathlib import Path
 
 import yaml
 
-_PROJECT_DIR = Path(__file__).resolve().parent
-_FRANCHISES_FILE = _PROJECT_DIR / "franchises.yaml"
-
-# Non-starter roster positions by sport.
-BENCH_POSITIONS: dict[str, set[str]] = {
-    "mlb": {"BN", "IL", "IL+", "NA", "DL"},
-    "nba": {"BN", "IL", "IL+", "INJ", "NA"},
-}
-_DEFAULT_BENCH = {"BN", "NA", "IL", "IL+", "DL", "INJ"}
-
-
-def bench_positions(sport: str) -> set[str]:
-    """Return the set of non-starter position codes for a sport."""
-    return BENCH_POSITIONS.get(sport, _DEFAULT_BENCH)
+_FRANCHISES_FILE = Path(__file__).resolve().parent / "franchises.yaml"
 
 
 def _load_raw() -> dict:
