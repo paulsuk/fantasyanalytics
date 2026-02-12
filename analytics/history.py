@@ -201,6 +201,98 @@ class ManagerHistory:
 
         return matrix
 
+    def franchise_h2h_matrix(self) -> dict:
+        """Pairwise H2H records between franchises (not managers).
+
+        Returns {franchise_id_a: {franchise_id_b: {wins, losses, ties}, ...}, ...}
+        Only includes matchups where both managers resolve to a franchise.
+        """
+        if not self._franchise.has_franchises:
+            return {}
+
+        matchups = self._all_matchups_with_guids()
+        matrix: dict[str, dict[str, dict]] = {}
+
+        for m in matchups:
+            g1, g2 = m["guid_1"], m["guid_2"]
+            season = m["season"]
+            fid1 = self._franchise.resolve_franchise(g1, season)
+            fid2 = self._franchise.resolve_franchise(g2, season)
+            if not fid1 or not fid2 or fid1 == fid2:
+                continue
+
+            for fa, fb, tk_a in [(fid1, fid2, m["team_key_1"]), (fid2, fid1, m["team_key_2"])]:
+                if fa not in matrix:
+                    matrix[fa] = {}
+                if fb not in matrix[fa]:
+                    matrix[fa][fb] = {"wins": 0, "losses": 0, "ties": 0}
+
+                if m["is_tied"]:
+                    matrix[fa][fb]["ties"] += 1
+                elif m["winner_team_key"] == tk_a:
+                    matrix[fa][fb]["wins"] += 1
+                else:
+                    matrix[fa][fb]["losses"] += 1
+
+        return matrix
+
+    def franchise_stats(self) -> list[dict]:
+        """Franchise-level aggregate stats, combining all managers per franchise."""
+        if not self._franchise.has_franchises:
+            return []
+
+        manager_list = self.managers()
+        mgr_by_guid = {m["guid"]: m for m in manager_list}
+        franchise_defs = self._franchise.franchise_list()
+
+        results = []
+        for fdef in franchise_defs:
+            wins = losses = ties = 0
+            all_seasons: list[int] = []
+            season_records: list[dict] = []
+
+            for owner in fdef["ownership"]:
+                guid = owner["guid"]
+                mgr = mgr_by_guid.get(guid)
+                if not mgr:
+                    continue
+                fr_from = owner["from"]
+                fr_to = owner.get("to")
+
+                for sr in mgr["season_records"]:
+                    s = sr["season"]
+                    if s < fr_from:
+                        continue
+                    if fr_to is not None and s > fr_to:
+                        continue
+                    wins += sr["wins"]
+                    losses += sr["losses"]
+                    ties += sr["ties"]
+                    all_seasons.append(s)
+                    season_records.append({
+                        **sr,
+                        "manager": mgr["name"],
+                    })
+
+            season_records.sort(key=lambda x: x["season"])
+            current_team_name = season_records[-1]["team_name"] if season_records else fdef["name"]
+
+            results.append({
+                "id": fdef["id"],
+                "name": fdef["name"],
+                "current_manager": fdef["current_manager"],
+                "current_team_name": current_team_name,
+                "ownership": fdef["ownership"],
+                "seasons": sorted(set(all_seasons)),
+                "wins": wins,
+                "losses": losses,
+                "ties": ties,
+                "season_records": season_records,
+            })
+
+        results.sort(key=lambda r: (r["wins"], -r["losses"]), reverse=True)
+        return results
+
 
 class LeagueRecords:
     """All-time league records across all seasons for a franchise."""

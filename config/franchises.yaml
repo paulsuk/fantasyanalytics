@@ -46,6 +46,53 @@ mlb:
     5BKUZI2G6POWJN3UPQMSIUKLK4:
       name: Ian
       short_name: Ian
+  franchises:
+  - name: Paul Suk
+    managers:
+    - guid: MBWXMSFQRBRIJ7DECGEDMVVO6Y
+      from: 2021
+  - name: Minho Suk
+    managers:
+    - guid: 3NHH2WZPAXF4Y4UWUU3R5SVBZ4
+      from: 2021
+  - name: Shane Graham
+    managers:
+    - guid: 5BKUZI2G6POWJN3UPQMSIUKLK4
+      from: 2021
+      to: 2021
+    - guid: 5IFGWHAGFAO7PKNH36OPT7DEME
+      from: 2022
+  - name: Jerry Zhang
+    managers:
+    - guid: 2E634HDJFSG423B2ZMSAQWFJCI
+      from: 2021
+  - name: Russell Johnson
+    managers:
+    - guid: ENNPQ4FMOGWJGBOJHXQP3A4M5Y
+      from: 2021
+  - name: Matthew Chang
+    managers:
+    - guid: Q2Z2T2CXBSK6JYVRUBREBQTHFI
+      from: 2021
+  - name: Sean Davidson
+    managers:
+    - guid: HLR4E6ECPDYTBD7G4SYKPPA2U4
+      from: 2021
+  - name: David Yun
+    managers:
+    - guid: WPRMDSUYTFHE6CQO4IR5N7BUMM
+      from: 2021
+      to: 2024
+    - guid: LERUUJFBXYSESU5SUXLD4R3M7Y
+      from: 2025
+  - name: Henry Shi
+    managers:
+    - guid: PWB7FXM7UOU756GYIWBGZSRQ5E
+      from: 2021
+  - name: Courtney Smith
+    managers:
+    - guid: AM6DQC4TJQ2WMDNRQ4IEKDJJY4
+      from: 2021
 nba:
 - name: TK Fiji Fantasy
   slug: basketball
@@ -129,3 +176,82 @@ nba:
     L3C4CA6IB4TLCHZSRUDHAADWG4:
       name: Andrew
       short_name: Andrew
+  franchises:
+  - name: Paul Suk
+    managers:
+    - guid: MBWXMSFQRBRIJ7DECGEDMVVO6Y
+      from: 2021
+  - name: Matthew Chang
+    managers:
+    - guid: Q2Z2T2CXBSK6JYVRUBREBQTHFI
+      from: 2021
+  - name: Dima Sochnyev
+    managers:
+    - guid: I2JASJIPLCEFNLGIGP3YSF3PNA
+      from: 2021
+  - name: Anthony Khoury
+    managers:
+    - guid: TPQP3QIJDGMFCOVYY4I7G4JFJA
+      from: 2021
+  - name: Kane Li
+    managers:
+    - guid: J4DLCFVOWSD2A42M26KC4ZHBUY
+      from: 2021
+  - name: Edgar Cordero
+    managers:
+    - guid: NIDQUZUF2PLNA63SCNEIQLHEAE
+      from: 2021
+      to: 2021
+    - guid: N75CNSMCRCHBOZGYJDTPLNW5SE
+      from: 2022
+  - name: Nikola Andrejevic
+    managers:
+    - guid: 72TWWD3BMT4BDJG5NBZZN4OLCU
+      from: 2021
+      to: 2022
+    - guid: 2E3TO7W7MDJGQQPMVLYTKWU3DQ
+      from: 2023
+      to: 2023
+    - guid: L3F4KXBW3MBTSOTRUNDROHPKRE
+      from: 2024
+      to: 2024
+    - guid: DXSDN7X6W2JXAF27JFYJEFOPTI
+      from: 2025
+  - name: Zaid Kassar
+    managers:
+    - guid: NU43ONGBJCFMLV7QTQ2OX76L6Q
+      from: 2021
+      to: 2022
+    - guid: 4BB3OIHYK4UUUBOS3LLJHWHWWA
+      from: 2023
+  - name: Calvin Chu
+    managers:
+    - guid: P6UUYNICORI6ST2AZT2USZ2DUY
+      from: 2021
+      to: 2022
+    - guid: J7HGUQORCHQVRMAH27BQMKZ7EI
+      from: 2023
+      to: 2023
+    - guid: NU43ONGBJCFMLV7QTQ2OX76L6Q
+      from: 2024
+  - name: Oliver Nadzieja
+    managers:
+    - guid: L3C4CA6IB4TLCHZSRUDHAADWG4
+      from: 2021
+      to: 2021
+    - guid: APW3A5NLSYBLJS5FODVWZ6RQG4
+      from: 2022
+  - name: Allen Xu
+    managers:
+    - guid: XJTDKZFRVLSRGMGLYK4H5I6BTQ
+      from: 2021
+      to: 2021
+    - guid: NVYBDYHLA2A7BVG6BNNLQXFRIA
+      from: 2022
+  - name: Avel Ivanov
+    managers:
+    - guid: F6D2PMTJ2KFFNCAHHIGNFRVFZA
+      from: 2021
+      to: 2022
+    - guid: P3XKRRKUOQA5DF3AUNZMD5ER6M
+      from: 2023

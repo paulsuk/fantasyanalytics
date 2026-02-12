@@ -29,6 +29,8 @@ class Franchise:
         # Manager config: guid -> {name, short_name}
         self._managers: dict[str, dict] = data.get("managers", {}) or {}
         self._former_managers: dict[str, dict] = data.get("former_managers", {}) or {}
+        # Franchise definitions: list of {name, managers: [{guid, from, to?}]}
+        self._franchise_defs: list[dict] = data.get("franchises", []) or []
 
     @property
     def latest_season(self) -> int:
@@ -60,6 +62,47 @@ class Franchise:
     def all_managers(self) -> dict[str, dict]:
         """All managers (active + former)."""
         return {**self._managers, **self._former_managers}
+
+    @property
+    def has_franchises(self) -> bool:
+        return len(self._franchise_defs) > 0
+
+    def resolve_franchise(self, guid: str, season: int) -> str | None:
+        """Map a (manager GUID, season) to a franchise ID like 'franchise_0'."""
+        for i, fdef in enumerate(self._franchise_defs):
+            for m in fdef["managers"]:
+                if m["guid"] != guid:
+                    continue
+                if season < m["from"]:
+                    continue
+                if "to" in m and m["to"] is not None and season > m["to"]:
+                    continue
+                return f"franchise_{i}"
+        return None
+
+    def franchise_list(self) -> list[dict]:
+        """Return franchise summaries for the API response."""
+        result = []
+        for i, fdef in enumerate(self._franchise_defs):
+            # Current owner is the last manager entry (no 'to' or highest 'to')
+            last_mgr = fdef["managers"][-1]
+            current_name = self.manager_name(last_mgr["guid"]) or last_mgr["guid"]
+            ownership = []
+            for m in fdef["managers"]:
+                mgr_name = self.manager_name(m["guid"]) or m["guid"]
+                ownership.append({
+                    "manager": mgr_name,
+                    "guid": m["guid"],
+                    "from": m["from"],
+                    "to": m.get("to"),
+                })
+            result.append({
+                "id": f"franchise_{i}",
+                "name": fdef["name"],
+                "current_manager": current_name,
+                "ownership": ownership,
+            })
+        return result
 
 
 def get_franchises() -> dict[str, list[Franchise]]:

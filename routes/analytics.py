@@ -132,10 +132,15 @@ def managers(slug: str):
     db = Database(slug)
     try:
         history = ManagerHistory(db, franchise)
-        return {
+        result = {
             "managers": history.managers(),
             "h2h": history.h2h_matrix(),
         }
+        if franchise.has_franchises:
+            result["franchises"] = franchise.franchise_list()
+            result["franchise_h2h"] = history.franchise_h2h_matrix()
+            result["franchise_stats"] = history.franchise_stats()
+        return result
     finally:
         db.close()
 
