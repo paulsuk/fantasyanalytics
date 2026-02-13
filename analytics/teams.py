@@ -72,6 +72,7 @@ class TeamProfiler:
                 "team_name": t["name"],
                 "manager": t["manager_name"] or "",
                 "wins": 0, "losses": 0, "ties": 0,
+                "cat_wins": 0, "cat_losses": 0, "cat_ties": 0,
             }
 
         matchups = get_matchups_through_week(self.db, self.league_key, through_week)
@@ -80,6 +81,17 @@ class TeamProfiler:
             tk1, tk2 = m["team_key_1"], m["team_key_2"]
             if tk1 not in records or tk2 not in records:
                 continue
+
+            # Category W-L-T
+            c1, c2, ct = m["cats_won_1"] or 0, m["cats_won_2"] or 0, m["cats_tied"] or 0
+            records[tk1]["cat_wins"] += c1
+            records[tk1]["cat_losses"] += c2
+            records[tk1]["cat_ties"] += ct
+            records[tk2]["cat_wins"] += c2
+            records[tk2]["cat_losses"] += c1
+            records[tk2]["cat_ties"] += ct
+
+            # Matchup W-L-T
             if m["is_tied"]:
                 records[tk1]["ties"] += 1
                 records[tk2]["ties"] += 1

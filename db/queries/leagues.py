@@ -46,20 +46,24 @@ def get_all_leagues_with_end_week(db):
 
 
 def get_distinct_scoring_categories(db):
-    """Get unique scoring categories across all seasons (for records)."""
+    """Get unique scoring categories across all seasons (for records).
+
+    Returns list of {display_name, sort_order, seasons: [int]}.
+    Deduplicates by display_name and tracks which seasons each stat was active.
+    """
     rows = db.fetchall(
-        "SELECT DISTINCT sc.stat_id, sc.display_name, sc.sort_order "
+        "SELECT sc.display_name, sc.sort_order, l.season "
         "FROM stat_category sc "
         "JOIN league l ON sc.league_key = l.league_key "
         "WHERE sc.is_scoring_stat = 1 "
-        "ORDER BY sc.display_name"
+        "ORDER BY sc.display_name, l.season"
     )
-    # Deduplicate by display_name (same stat across seasons)
-    seen = set()
-    unique = []
+    cats: dict[str, dict] = {}
     for r in rows:
         dn = r["display_name"]
-        if dn not in seen:
-            seen.add(dn)
-            unique.append(dict(r))
-    return unique
+        if dn not in cats:
+            cats[dn] = {"display_name": dn, "sort_order": r["sort_order"], "seasons": []}
+        s = r["season"]
+        if s not in cats[dn]["seasons"]:
+            cats[dn]["seasons"].append(s)
+    return list(cats.values())

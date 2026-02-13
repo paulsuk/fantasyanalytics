@@ -59,6 +59,7 @@ class ManagerHistory:
                 "is_current": guid in self._current_guids,
                 "seasons": sorted(set(t["season"] for t in teams)),
                 "wins": 0, "losses": 0, "ties": 0,
+                "cat_wins": 0, "cat_losses": 0, "cat_ties": 0,
                 "playoff_wins": 0, "playoff_losses": 0,
                 "championships": 0,
                 "regular_season_firsts": 0,
@@ -112,6 +113,12 @@ class ManagerHistory:
             else:
                 # Category W-L-T (per-category results within the matchup)
                 c1, c2, ct = m["cats_won_1"] or 0, m["cats_won_2"] or 0, m["cats_tied"] or 0
+                records[g1]["cat_wins"] += c1
+                records[g1]["cat_losses"] += c2
+                records[g1]["cat_ties"] += ct
+                records[g2]["cat_wins"] += c2
+                records[g2]["cat_losses"] += c1
+                records[g2]["cat_ties"] += ct
                 if season in season_records.get(g1, {}):
                     season_records[g1][season]["cat_wins"] += c1
                     season_records[g1][season]["cat_losses"] += c2
@@ -251,7 +258,7 @@ class ManagerHistory:
 
         results = []
         for fdef in franchise_defs:
-            wins = losses = ties = championships = 0
+            wins = losses = ties = cat_wins = cat_losses = cat_ties = championships = 0
             all_seasons: list[int] = []
             season_records: list[dict] = []
 
@@ -272,6 +279,9 @@ class ManagerHistory:
                     wins += sr["wins"]
                     losses += sr["losses"]
                     ties += sr["ties"]
+                    cat_wins += sr["cat_wins"]
+                    cat_losses += sr["cat_losses"]
+                    cat_ties += sr["cat_ties"]
                     if sr.get("finish") == 1:
                         championships += 1
                     all_seasons.append(s)
@@ -293,6 +303,9 @@ class ManagerHistory:
                 "wins": wins,
                 "losses": losses,
                 "ties": ties,
+                "cat_wins": cat_wins,
+                "cat_losses": cat_losses,
+                "cat_ties": cat_ties,
                 "championships": championships,
                 "season_records": season_records,
             })
@@ -336,6 +349,7 @@ class LeagueRecords:
                     "season": row["season"],
                     "week": row["week"],
                     "higher_is_better": higher_is_better,
+                    "seasons_active": cat["seasons"],
                 })
 
         return results
