@@ -1,4 +1,4 @@
-"""Analytics endpoints: recap, teams, managers, records, playoffs."""
+"""Analytics endpoints: recap, teams, managers, records, playoffs, franchise detail."""
 
 from dataclasses import asdict
 
@@ -9,6 +9,7 @@ from db.queries import get_playoff_bracket
 from analytics.recap import RecapAssembler
 from analytics.teams import TeamProfiler
 from analytics.history import ManagerHistory, LeagueRecords
+from analytics.franchise import FranchiseDetail
 from routes.leagues import resolve_league, resolve_week
 
 router = APIRouter(prefix="/api")
@@ -28,6 +29,22 @@ def recap(
 
         assembler = RecapAssembler(db, league_key)
         recap_data = assembler.build(week)
+
+        # Resolve franchise_id for each team
+        franchise = get_franchise_by_slug(slug)
+        franchise_map: dict[str, str | None] = {}
+        if franchise and franchise.has_franchises:
+            team_rows = db.fetchall(
+                "SELECT team_key, manager_guid FROM team WHERE league_key=?",
+                (league_key,),
+            )
+            for t in team_rows:
+                fid = franchise.resolve_franchise(t["manager_guid"], recap_data.season)
+                franchise_map[t["team_key"]] = fid
+
+        standings = recap_data.standings
+        for s in standings:
+            s["franchise_id"] = franchise_map.get(s.get("team_key"))
 
         return {
             "league_key": recap_data.league_key,
@@ -55,9 +72,10 @@ def recap(
             "batter_of_week": asdict(recap_data.batter_of_week) if recap_data.batter_of_week else None,
             "pitcher_of_week": asdict(recap_data.pitcher_of_week) if recap_data.pitcher_of_week else None,
             "player_of_week": asdict(recap_data.player_of_week) if recap_data.player_of_week else None,
-            "standings": recap_data.standings,
+            "standings": standings,
             "profiles": [
                 {
+                    "team_key": p.team_key,
                     "team_name": p.team_name,
                     "manager": p.manager,
                     "wins": p.wins,
@@ -71,6 +89,7 @@ def recap(
                     "cat_weaknesses": p.cat_weaknesses,
                     "mvp_name": p.mvp_name,
                     "mvp_z": p.mvp_z,
+                    "franchise_id": franchise_map.get(p.team_key),
                 }
                 for p in recap_data.profiles
             ],
@@ -207,5 +226,22 @@ def playoffs(
                 current_round["matchups"].append(matchup)
 
         return {"league_key": league_key, "rounds": rounds}
+    finally:
+        db.close()
+
+
+@router.get("/{slug}/franchise/{franchise_id}")
+def franchise_detail(slug: str, franchise_id: str):
+    """Get full detail for a single franchise."""
+    franchise = get_franchise_by_slug(slug)
+    if not franchise:
+        raise HTTPException(status_code=404, detail=f"Unknown franchise: {slug}")
+
+    db = Database(slug)
+    try:
+        detail = FranchiseDetail(db, franchise, franchise_id)
+        return detail.detail()
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     finally:
         db.close()

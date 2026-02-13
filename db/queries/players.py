@@ -58,3 +58,16 @@ def get_player_weekly_stats_sum(db, league_key: str, player_key: str,
         f"GROUP BY stat_id",
         (league_key, player_key, from_week, *stat_ids),
     )
+
+
+def get_end_of_season_roster(db, league_key: str, team_key: str, week: int):
+    """Players on a team's roster in the specified week."""
+    return db.fetchall(
+        "SELECT wr.player_key, p.full_name, p.primary_position, "
+        "       wr.selected_position, wr.is_starter "
+        "FROM weekly_roster wr "
+        "JOIN player p ON wr.player_key = p.player_key "
+        "WHERE wr.league_key=? AND wr.team_key=? AND wr.week=? "
+        "ORDER BY wr.is_starter DESC, wr.selected_position",
+        (league_key, team_key, week),
+    )

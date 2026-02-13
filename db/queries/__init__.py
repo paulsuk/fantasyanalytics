@@ -32,12 +32,15 @@ from .players import (
     get_weekly_roster_stats,
     get_category_leaders,
     get_player_weekly_stats_sum,
+    get_end_of_season_roster,
 )
 from .transactions import (
     get_add_transactions,
     get_recent_adds,
     get_recent_drops,
     get_week_transactions,
+    get_transaction_counts_for_teams,
+    get_trades_for_teams,
 )
 from .history import (
     get_all_manager_teams,
