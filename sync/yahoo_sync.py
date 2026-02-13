@@ -87,6 +87,30 @@ class YahooSync:
                 standings_map[t.team_key] = t
 
             with self.db.transaction():
+                # Extract week info with validation
+                # Yahoo returns unreliable week data for historical seasons
+                # (e.g. start/end swapped, current_week from the live season)
+                start_week = league.start_week
+                end_week = league.end_week
+                current_week = league.current_week
+                playoff_start_week = settings.playoff_start_week
+                is_finished = getattr(league, "is_finished", 0)
+
+                # Fix swapped start/end weeks
+                if start_week and end_week and start_week > end_week:
+                    start_week, end_week = end_week, start_week
+
+                # For finished seasons, current_week should equal end_week
+                if is_finished and end_week:
+                    current_week = end_week
+
+                # Sanity check: if end_week seems wrong but playoff_start_week
+                # is valid, estimate end_week (playoffs are typically 2-3 weeks)
+                if playoff_start_week and (not end_week or end_week < playoff_start_week):
+                    end_week = playoff_start_week + 2
+                    if is_finished:
+                        current_week = end_week
+
                 # League table
                 self.db.execute(
                     "INSERT OR REPLACE INTO league VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -99,12 +123,12 @@ class YahooSync:
                         league.scoring_type,
                         len([s for s in settings.stat_categories.stats
                              if not getattr(s, "is_only_display_stat", 0)]),
-                        league.current_week,
-                        league.start_week,
-                        league.end_week,
-                        settings.playoff_start_week,
+                        current_week,
+                        start_week,
+                        end_week,
+                        playoff_start_week,
                         1 if getattr(settings, "uses_faab", False) else 0,
-                        getattr(league, "is_finished", 0),
+                        is_finished,
                         _now_iso(),
                     ),
                 )
@@ -138,8 +162,20 @@ class YahooSync:
                     nickname = getattr(mgr, "nickname", "") if mgr else ""
                     resolved_name = self.franchise.manager_name(guid) or ""
 
+                    # Extract standings rank info
+                    # Yahoo rank = final placement (playoff result); 1 = champion
+                    # playoff_seed = regular season finish (seed entering playoffs)
+                    ts = getattr(st, "team_standings", None)
+                    finish = None
+                    playoff_seed = None
+                    if ts:
+                        rank_val = getattr(ts, "rank", None)
+                        finish = int(rank_val) if rank_val is not None else None
+                        seed_val = getattr(ts, "playoff_seed", None)
+                        playoff_seed = int(seed_val) if seed_val is not None else None
+
                     self.db.execute(
-                        "INSERT OR REPLACE INTO team VALUES (?,?,?,?,?,?,?,?,?)",
+                        "INSERT OR REPLACE INTO team VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                         (
                             league_key,
                             team.team_key,
@@ -150,6 +186,8 @@ class YahooSync:
                             resolved_name,
                             getattr(st, "waiver_priority", None),
                             getattr(st, "faab_balance", None),
+                            finish,
+                            playoff_seed,
                         ),
                     )
                     records += 1
@@ -497,6 +535,54 @@ class YahooSync:
             print(f"  [done] backfilled week for {updated} transactions")
 
     # ------------------------------------------------------------------
+    # League week repair
+    # ------------------------------------------------------------------
+
+    def _repair_league_weeks(self, league_key: str):
+        """Fix league start/end/current week from actual matchup data.
+
+        Yahoo returns unreliable week metadata for historical seasons.
+        The matchup data is the source of truth.
+        """
+        info = self.db.fetchone(
+            "SELECT MIN(week) as min_w, MAX(week) as max_w, "
+            "MIN(CASE WHEN is_playoffs=1 OR is_consolation=1 "
+            "    THEN week ELSE NULL END) as first_playoff "
+            "FROM matchup WHERE league_key=?",
+            (league_key,),
+        )
+        if not info or not info["min_w"]:
+            return
+
+        league = self.db.fetchone(
+            "SELECT start_week, end_week, is_finished FROM league WHERE league_key=?",
+            (league_key,),
+        )
+        if not league:
+            return
+
+        start_w = info["min_w"]
+        end_w = info["max_w"]
+        current_w = end_w if league["is_finished"] else league["end_week"]
+        needs_fix = (
+            league["start_week"] != start_w
+            or league["end_week"] != end_w
+        )
+
+        if needs_fix:
+            self.db.execute(
+                "UPDATE league SET start_week=?, end_week=?, current_week=? "
+                "WHERE league_key=?",
+                (start_w, end_w, current_w, league_key),
+            )
+            if info["first_playoff"]:
+                self.db.execute(
+                    "UPDATE league SET playoff_start_week=? WHERE league_key=?",
+                    (info["first_playoff"], league_key),
+                )
+            print(f"  [fix] league weeks corrected: {start_w}-{end_w}")
+
+    # ------------------------------------------------------------------
     # Full season sync
     # ------------------------------------------------------------------
 
@@ -557,8 +643,51 @@ class YahooSync:
         # Backfill transaction weeks now that matchup dates are available
         self._backfill_transaction_weeks(league_key)
 
+        # Repair league week metadata from actual matchup data
+        # (Yahoo returns unreliable week info for historical seasons)
+        self._repair_league_weeks(league_key)
+
         self._check_unconfigured_managers(league_key)
         print(f"Season {season} sync complete.\n")
+
+    def sync_standings(self):
+        """Re-fetch standings for all seasons to update finish/playoff_seed.
+
+        Only updates team table (finish, playoff_seed) — does NOT touch league metadata.
+        Safer than full metadata re-sync for historical seasons.
+        """
+        for season in sorted(self.franchise.seasons):
+            league_key = self.franchise.league_key_for_season(season)
+            if not league_key:
+                continue
+
+            query = self.client.query_for_franchise(self.franchise.slug, season)
+            try:
+                standings = query.get_league_standings()
+                self._wait()
+
+                updated = 0
+                with self.db.transaction():
+                    for team in standings.teams:
+                        ts = getattr(team, "team_standings", None)
+                        if not ts:
+                            continue
+                        rank_val = getattr(ts, "rank", None)
+                        seed_val = getattr(ts, "playoff_seed", None)
+                        finish = int(rank_val) if rank_val is not None else None
+                        playoff_seed = int(seed_val) if seed_val is not None else None
+
+                        self.db.execute(
+                            "UPDATE team SET finish=?, playoff_seed=? "
+                            "WHERE league_key=? AND team_key=?",
+                            (finish, playoff_seed, league_key, team.team_key),
+                        )
+                        updated += 1
+
+                print(f"  [done] {season} standings: {updated} teams updated")
+
+            except Exception as e:
+                print(f"  [warn] {season} standings failed: {e}")
 
     def sync_all(self):
         """Sync all configured seasons for this franchise."""

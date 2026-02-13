@@ -92,3 +92,25 @@ def get_regular_season_matchups(db, league_key: str):
         "FROM matchup WHERE league_key=? AND is_playoffs=0 AND is_consolation=0",
         (league_key,),
     )
+
+
+def get_playoff_bracket(db, league_key: str):
+    """All playoff and consolation matchups for a league, ordered by week.
+
+    Returns matchups with team names, managers, scores, and bracket type.
+    """
+    return db.fetchall(
+        "SELECT m.week, m.matchup_id, m.team_key_1, m.team_key_2, "
+        "       m.cats_won_1, m.cats_won_2, m.cats_tied, "
+        "       m.winner_team_key, m.is_tied, m.is_playoffs, m.is_consolation, "
+        "       t1.name AS team_name_1, t1.manager_name AS manager_1, "
+        "       t1.playoff_seed AS seed_1, "
+        "       t2.name AS team_name_2, t2.manager_name AS manager_2, "
+        "       t2.playoff_seed AS seed_2 "
+        "FROM matchup m "
+        "JOIN team t1 ON m.league_key = t1.league_key AND m.team_key_1 = t1.team_key "
+        "JOIN team t2 ON m.league_key = t2.league_key AND m.team_key_2 = t2.team_key "
+        "WHERE m.league_key=? AND (m.is_playoffs=1 OR m.is_consolation=1) "
+        "ORDER BY m.week, m.is_consolation, m.matchup_id",
+        (league_key,),
+    )

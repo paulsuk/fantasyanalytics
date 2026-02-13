@@ -26,6 +26,7 @@ from .matchups import (
     get_matchup_categories,
     get_matchup_dates,
     get_regular_season_matchups,
+    get_playoff_bracket,
 )
 from .players import (
     get_weekly_roster_stats,

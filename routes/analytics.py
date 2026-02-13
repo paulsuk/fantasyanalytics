@@ -1,10 +1,11 @@
-"""Analytics endpoints: recap, teams, managers, records."""
+"""Analytics endpoints: recap, teams, managers, records, playoffs."""
 
 from dataclasses import asdict
 
 from fastapi import APIRouter, HTTPException, Query
 from config import get_franchise_by_slug
 from db import Database
+from db.queries import get_playoff_bracket
 from analytics.recap import RecapAssembler
 from analytics.teams import TeamProfiler
 from analytics.history import ManagerHistory, LeagueRecords
@@ -146,7 +147,10 @@ def managers(slug: str):
 
 
 @router.get("/{slug}/records")
-def records(slug: str):
+def records(
+    slug: str,
+    include_playoffs: bool = Query(default=False),
+):
     """Get all-time league records."""
     franchise = get_franchise_by_slug(slug)
     if not franchise:
@@ -154,7 +158,54 @@ def records(slug: str):
 
     db = Database(slug)
     try:
-        lr = LeagueRecords(db)
+        lr = LeagueRecords(db, include_playoffs=include_playoffs)
         return lr.records()
+    finally:
+        db.close()
+
+
+@router.get("/{slug}/playoffs")
+def playoffs(
+    slug: str,
+    season: int | None = Query(default=None),
+):
+    """Get playoff bracket for a season."""
+    db = Database(slug)
+    try:
+        league_key = resolve_league(slug, db, season)
+        rows = get_playoff_bracket(db, league_key)
+
+        # Group by week and bracket type
+        rounds: list[dict] = []
+        current_week = None
+        current_round: dict | None = None
+
+        for r in rows:
+            if r["week"] != current_week:
+                current_week = r["week"]
+                current_round = {"week": current_week, "matchups": [], "consolation": []}
+                rounds.append(current_round)
+
+            matchup = {
+                "team_1_name": r["team_name_1"],
+                "team_1_manager": r["manager_1"],
+                "team_1_seed": r["seed_1"],
+                "team_2_name": r["team_name_2"],
+                "team_2_manager": r["manager_2"],
+                "team_2_seed": r["seed_2"],
+                "cats_won_1": r["cats_won_1"],
+                "cats_won_2": r["cats_won_2"],
+                "cats_tied": r["cats_tied"],
+                "winner": r["team_name_1"] if r["winner_team_key"] == r["team_key_1"]
+                    else (r["team_name_2"] if r["winner_team_key"] == r["team_key_2"] else None),
+                "is_tied": bool(r["is_tied"]),
+            }
+
+            if r["is_consolation"]:
+                current_round["consolation"].append(matchup)
+            else:
+                current_round["matchups"].append(matchup)
+
+        return {"league_key": league_key, "rounds": rounds}
     finally:
         db.close()

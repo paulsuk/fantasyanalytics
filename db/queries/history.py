@@ -5,7 +5,8 @@ def get_all_manager_teams(db):
     """All teams with their manager GUIDs and seasons, ordered by season."""
     return db.fetchall(
         "SELECT t.manager_guid, t.manager_name, t.team_key, t.name AS team_name, "
-        "       l.league_key, l.season "
+        "       t.finish, t.playoff_seed, "
+        "       l.league_key, l.season, l.is_finished "
         "FROM team t JOIN league l ON t.league_key = l.league_key "
         "WHERE t.manager_guid IS NOT NULL "
         "ORDER BY l.season"
@@ -46,8 +47,12 @@ def get_category_record_holder(db, display_name: str, order: str):
     )
 
 
-def get_all_regular_season_matchups_with_managers(db):
-    """All regular season matchups with manager info (for streak computation)."""
+def get_all_regular_season_matchups_with_managers(db, include_playoffs: bool = False):
+    """All matchups with manager info (for streak computation).
+
+    By default only regular season. Set include_playoffs=True to include all.
+    """
+    where = "" if include_playoffs else "WHERE m.is_playoffs = 0 AND m.is_consolation = 0 "
     return db.fetchall(
         "SELECT m.team_key_1, m.team_key_2, m.winner_team_key, m.is_tied, "
         "       t1.manager_guid AS guid_1, t1.manager_name AS name_1, t1.name AS team_name_1, "
@@ -57,13 +62,17 @@ def get_all_regular_season_matchups_with_managers(db):
         "JOIN team t1 ON m.league_key = t1.league_key AND m.team_key_1 = t1.team_key "
         "JOIN team t2 ON m.league_key = t2.league_key AND m.team_key_2 = t2.team_key "
         "JOIN league l ON m.league_key = l.league_key "
-        "WHERE m.is_playoffs = 0 AND m.is_consolation = 0 "
+        f"{where}"
         "ORDER BY l.season, m.week"
     )
 
 
-def get_all_regular_season_matchup_scores(db):
-    """All regular season matchup scores with team info (for blowout/closest records)."""
+def get_all_regular_season_matchup_scores(db, include_playoffs: bool = False):
+    """All matchup scores with team info (for blowout/closest records).
+
+    By default only regular season. Set include_playoffs=True to include all.
+    """
+    where = "" if include_playoffs else "WHERE m.is_playoffs = 0 AND m.is_consolation = 0"
     return db.fetchall(
         "SELECT m.cats_won_1, m.cats_won_2, m.cats_tied, m.is_tied, "
         "       t1.manager_name AS manager_1, t1.name AS team_name_1, "
@@ -73,5 +82,5 @@ def get_all_regular_season_matchup_scores(db):
         "JOIN team t1 ON m.league_key = t1.league_key AND m.team_key_1 = t1.team_key "
         "JOIN team t2 ON m.league_key = t2.league_key AND m.team_key_2 = t2.team_key "
         "JOIN league l ON m.league_key = l.league_key "
-        "WHERE m.is_playoffs = 0 AND m.is_consolation = 0"
+        f"{where}"
     )

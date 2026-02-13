@@ -46,6 +46,8 @@ CREATE TABLE IF NOT EXISTS team (
     manager_name     TEXT,               -- from config (resolved at sync time)
     waiver_priority  INTEGER,
     faab_balance     REAL,
+    finish           INTEGER,            -- final rank (playoff placement; 1 = champion)
+    playoff_seed     INTEGER,            -- regular season finish (seed entering playoffs)
     PRIMARY KEY (league_key, team_key),
     FOREIGN KEY (league_key) REFERENCES league(league_key)
 );

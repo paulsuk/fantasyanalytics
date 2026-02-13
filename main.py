@@ -43,13 +43,16 @@ def list_seasons():
             print(f"    {ss.season} — game_key={ss.game_key}")
 
 
-def sync_command(slug: str, season: int = None, incremental: bool = False):
+def sync_command(slug: str, season: int = None, incremental: bool = False,
+                 sync_standings: bool = False):
     """Sync Yahoo data into the database."""
     from sync.yahoo_sync import YahooSync
 
     syncer = YahooSync(slug)
     try:
-        if incremental:
+        if sync_standings:
+            syncer.sync_standings()
+        elif incremental:
             syncer.sync_incremental()
         elif season:
             syncer.sync_season(season)
@@ -110,6 +113,7 @@ Usage:
   python main.py sync <slug>                    — Sync all seasons for a franchise
   python main.py sync <slug> --season <year>    — Sync one season
   python main.py sync <slug> --incremental      — Sync latest unsynced week only
+  python main.py sync <slug> --sync-standings   — Update finish/playoff_seed from Yahoo
   python main.py managers <slug>                — Discover manager GUIDs for config
 """.strip()
 
@@ -132,11 +136,13 @@ def main():
         slug = args[1]
         season = None
         incremental = "--incremental" in args
+        sync_standings = "--sync-standings" in args
         if "--season" in args:
             idx = args.index("--season")
             if idx + 1 < len(args):
                 season = int(args[idx + 1])
-        sync_command(slug, season=season, incremental=incremental)
+        sync_command(slug, season=season, incremental=incremental,
+                     sync_standings=sync_standings)
     elif cmd == "managers" and len(args) > 1:
         show_managers(args[1])
     else:

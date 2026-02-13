@@ -5,9 +5,6 @@ from db import Database
 from db.queries import (
     get_all_manager_teams,
     get_all_matchups_with_manager_guids,
-    get_all_leagues_with_end_week,
-    get_league_team_keys,
-    get_regular_season_matchups,
     get_distinct_scoring_categories,
     get_category_record_holder,
     get_all_regular_season_matchups_with_managers,
@@ -24,7 +21,7 @@ class ManagerHistory:
         self._current_guids = franchise.current_manager_guids
 
     def _load_manager_teams(self) -> dict[str, list[dict]]:
-        """Map manager_guid -> list of {league_key, season, team_key, team_name}."""
+        """Map manager_guid -> list of {league_key, season, team_key, team_name, finish, ...}."""
         rows = get_all_manager_teams(self.db)
         by_guid: dict[str, list[dict]] = {}
         for r in rows:
@@ -37,6 +34,9 @@ class ManagerHistory:
                 "team_key": r["team_key"],
                 "team_name": r["team_name"],
                 "manager_name": r["manager_name"],
+                "finish": r["finish"],
+                "playoff_seed": r["playoff_seed"],
+                "is_finished": r["is_finished"],
             })
         return by_guid
 
@@ -61,6 +61,7 @@ class ManagerHistory:
                 "wins": 0, "losses": 0, "ties": 0,
                 "playoff_wins": 0, "playoff_losses": 0,
                 "championships": 0,
+                "regular_season_firsts": 0,
                 "best_finish": None,
                 "worst_finish": None,
             }
@@ -85,6 +86,9 @@ class ManagerHistory:
                     "season": t["season"],
                     "team_name": t["team_name"],
                     "wins": 0, "losses": 0, "ties": 0,
+                    "cat_wins": 0, "cat_losses": 0, "cat_ties": 0,
+                    "finish": t.get("finish"),
+                    "playoff_seed": t.get("playoff_seed"),
                 }
 
         for m in matchups:
@@ -106,6 +110,18 @@ class ManagerHistory:
                     records[g2]["playoff_wins"] += 1
                     records[g1]["playoff_losses"] += 1
             else:
+                # Category W-L-T (per-category results within the matchup)
+                c1, c2, ct = m["cats_won_1"] or 0, m["cats_won_2"] or 0, m["cats_tied"] or 0
+                if season in season_records.get(g1, {}):
+                    season_records[g1][season]["cat_wins"] += c1
+                    season_records[g1][season]["cat_losses"] += c2
+                    season_records[g1][season]["cat_ties"] += ct
+                if season in season_records.get(g2, {}):
+                    season_records[g2][season]["cat_wins"] += c2
+                    season_records[g2][season]["cat_losses"] += c1
+                    season_records[g2][season]["cat_ties"] += ct
+
+                # Matchup W-L-T (weekly outcome)
                 if m["is_tied"]:
                     records[g1]["ties"] += 1
                     records[g2]["ties"] += 1
@@ -128,41 +144,29 @@ class ManagerHistory:
                     if season in season_records.get(g1, {}):
                         season_records[g1][season]["losses"] += 1
 
-        # Championships and finishes from final standings per season
-        leagues = get_all_leagues_with_end_week(self.db)
-        for lg in leagues:
-            lk, end_week = lg["league_key"], lg["end_week"]
-            teams = get_league_team_keys(self.db, lk)
-            # Compute standings from regular season matchups
-            team_records: dict[str, dict] = {}
+        # Championships, finishes, and regular season firsts from DB
+        for guid, teams in manager_teams.items():
+            if guid not in records:
+                continue
             for t in teams:
-                tk = t["team_key"]
-                team_records[tk] = {"w": 0, "l": 0}
+                finish = t.get("finish")
+                playoff_seed = t.get("playoff_seed")
+                is_finished = t.get("is_finished")
 
-            reg_matchups = get_regular_season_matchups(self.db, lk)
-            for rm in reg_matchups:
-                tk1, tk2 = rm["team_key_1"], rm["team_key_2"]
-                if tk1 in team_records and tk2 in team_records:
-                    if rm["is_tied"]:
-                        pass
-                    elif rm["winner_team_key"] == tk1:
-                        team_records[tk1]["w"] += 1
-                        team_records[tk2]["l"] += 1
-                    else:
-                        team_records[tk2]["w"] += 1
-                        team_records[tk1]["l"] += 1
-
-            ranked = sorted(team_records.items(), key=lambda x: (x[1]["w"], -x[1]["l"]), reverse=True)
-            for i, (tk, _) in enumerate(ranked):
-                finish = i + 1
-                guid = tk_to_guid.get(tk)
-                if guid and guid in records:
+                # Best/worst finish uses final rank (playoff placement)
+                if finish is not None:
                     best = records[guid]["best_finish"]
                     worst = records[guid]["worst_finish"]
                     records[guid]["best_finish"] = min(best, finish) if best else finish
                     records[guid]["worst_finish"] = max(worst, finish) if worst else finish
-                    if finish == 1:
+
+                    # Championship = finished season + final rank 1 (won playoffs)
+                    if is_finished and finish == 1:
                         records[guid]["championships"] += 1
+
+                # Regular season first = playoff_seed 1 (best regular season record)
+                if playoff_seed is not None and playoff_seed == 1:
+                    records[guid]["regular_season_firsts"] += 1
 
         # Attach per-season breakdowns
         for guid, rec in records.items():
@@ -247,7 +251,7 @@ class ManagerHistory:
 
         results = []
         for fdef in franchise_defs:
-            wins = losses = ties = 0
+            wins = losses = ties = championships = 0
             all_seasons: list[int] = []
             season_records: list[dict] = []
 
@@ -268,6 +272,8 @@ class ManagerHistory:
                     wins += sr["wins"]
                     losses += sr["losses"]
                     ties += sr["ties"]
+                    if sr.get("finish") == 1:
+                        championships += 1
                     all_seasons.append(s)
                     season_records.append({
                         **sr,
@@ -287,6 +293,7 @@ class ManagerHistory:
                 "wins": wins,
                 "losses": losses,
                 "ties": ties,
+                "championships": championships,
                 "season_records": season_records,
             })
 
@@ -297,8 +304,9 @@ class ManagerHistory:
 class LeagueRecords:
     """All-time league records across all seasons for a franchise."""
 
-    def __init__(self, db: Database):
+    def __init__(self, db: Database, include_playoffs: bool = False):
         self.db = db
+        self._include_playoffs = include_playoffs
 
     def records(self) -> dict:
         """Compute all-time records."""
@@ -334,7 +342,7 @@ class LeagueRecords:
 
     def _streaks(self) -> dict:
         """Longest win and loss streaks across all seasons."""
-        rows = get_all_regular_season_matchups_with_managers(self.db)
+        rows = get_all_regular_season_matchups_with_managers(self.db, self._include_playoffs)
 
         # Track per-manager streaks across all seasons
         active: dict[str, dict] = {}
@@ -397,7 +405,7 @@ class LeagueRecords:
 
     def _matchup_records(self) -> dict:
         """Biggest blowout and closest match."""
-        rows = get_all_regular_season_matchup_scores(self.db)
+        rows = get_all_regular_season_matchup_scores(self.db, self._include_playoffs)
 
         biggest_blowout = None
         closest_match = None

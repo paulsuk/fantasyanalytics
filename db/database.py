@@ -48,8 +48,8 @@ class Database:
 
     def _migrate(self):
         """Run schema migrations for existing databases."""
-        columns = [row[1] for row in self.conn.execute("PRAGMA table_info(league)").fetchall()]
-        if "sport" not in columns:
+        league_cols = [row[1] for row in self.conn.execute("PRAGMA table_info(league)").fetchall()]
+        if "sport" not in league_cols:
             self.conn.execute("ALTER TABLE league ADD COLUMN sport TEXT")
             self.conn.commit()
 
@@ -71,6 +71,23 @@ class Database:
             )
         if nulls:
             self.conn.commit()
+
+        # Add finish and playoff_seed columns to team table
+        team_cols = [row[1] for row in self.conn.execute("PRAGMA table_info(team)").fetchall()]
+        if "finish" not in team_cols:
+            self.conn.execute("ALTER TABLE team ADD COLUMN finish INTEGER")
+            self.conn.execute("ALTER TABLE team ADD COLUMN playoff_seed INTEGER")
+            self.conn.commit()
+
+        # Fix is_finished for past seasons (Yahoo doesn't always set it for basketball)
+        from datetime import date
+        current_year = date.today().year
+        self.conn.execute(
+            "UPDATE league SET is_finished = 1 "
+            "WHERE season < ? AND is_finished = 0",
+            (current_year,),
+        )
+        self.conn.commit()
 
     @contextmanager
     def transaction(self):
