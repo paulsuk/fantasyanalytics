@@ -62,6 +62,60 @@ def sync_command(slug: str, season: int = None, incremental: bool = False,
         syncer.close()
 
 
+def sync_keepers_command(slug: str):
+    """Sync keeper designations from Yahoo API into the database."""
+    from sync.yahoo_sync import YahooSync
+
+    syncer = YahooSync(slug)
+    try:
+        syncer.sync_keepers()
+    finally:
+        syncer.close()
+
+
+def show_keepers(slug: str):
+    """Show keeper data currently in the database."""
+    from config import get_franchise_by_slug
+    from db import Database
+
+    franchise = get_franchise_by_slug(slug)
+    if not franchise:
+        print(f"Unknown franchise slug: '{slug}'")
+        return
+
+    db = Database(slug)
+    try:
+        rows = db.fetchall(
+            "SELECT k.season, k.player_name, k.round_cost, k.kept_from_season, "
+            "       t.name AS team_name, t.manager_name "
+            "FROM keeper k "
+            "JOIN team t ON k.league_key = t.league_key AND k.team_key = t.team_key "
+            "ORDER BY k.season, t.name, k.player_name"
+        )
+        if not rows:
+            print(f"No keepers found in database for '{slug}'")
+            return
+
+        print(f"\n{'='*50}")
+        print(f"Keepers — {franchise.name}")
+        print(f"{'='*50}")
+
+        current_season = None
+        current_team = None
+        for r in rows:
+            if r["season"] != current_season:
+                current_season = r["season"]
+                current_team = None
+                print(f"\n  {current_season}:")
+            if r["team_name"] != current_team:
+                current_team = r["team_name"]
+                team = r["team_name"].encode("ascii", "replace").decode()
+                print(f"    {r['manager_name']} ({team}):")
+            print(f"      {r['player_name']}")
+    finally:
+        db.close()
+
+
 def show_managers(slug: str):
     """Discover manager GUIDs and auto-add unconfigured ones to franchises.yaml."""
     from config import get_franchise_by_slug, add_managers
@@ -115,6 +169,9 @@ Usage:
   python main.py sync <slug> --incremental      — Sync latest unsynced week only
   python main.py sync <slug> --sync-standings   — Update finish/playoff_seed from Yahoo
   python main.py managers <slug>                — Discover manager GUIDs for config
+
+  python main.py keepers sync <slug>            — Sync keepers from Yahoo API into DB
+  python main.py keepers show <slug>            — Show keeper data from DB
 """.strip()
 
 
@@ -145,6 +202,16 @@ def main():
                      sync_standings=sync_standings)
     elif cmd == "managers" and len(args) > 1:
         show_managers(args[1])
+    elif cmd == "keepers" and len(args) > 2:
+        subcmd = args[1].lower()
+        slug = args[2]
+        if subcmd == "sync":
+            sync_keepers_command(slug)
+        elif subcmd == "show":
+            show_keepers(slug)
+        else:
+            print(f"Unknown keepers subcommand: {subcmd}\n")
+            print(USAGE)
     else:
         print(f"Unknown command: {cmd}\n")
         print(USAGE)

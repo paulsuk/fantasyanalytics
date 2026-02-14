@@ -37,6 +37,11 @@ class Franchise:
         return max(self.seasons) if self.seasons else 0
 
     @property
+    def min_season(self) -> int:
+        """Earliest season configured for this franchise."""
+        return min(self.seasons) if self.seasons else 0
+
+    @property
     def latest_league_key(self) -> str:
         return self.seasons.get(self.latest_season, "")
 

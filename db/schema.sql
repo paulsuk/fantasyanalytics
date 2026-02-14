@@ -182,6 +182,18 @@ CREATE TABLE IF NOT EXISTS draft_pick (
     FOREIGN KEY (league_key) REFERENCES league(league_key)
 );
 
+CREATE TABLE IF NOT EXISTS keeper (
+    league_key       TEXT NOT NULL,
+    team_key         TEXT NOT NULL,
+    player_key       TEXT,              -- nullable (historical data may lack this)
+    player_name      TEXT NOT NULL,
+    season           INTEGER NOT NULL,
+    round_cost       INTEGER,           -- which draft round the keeper "costs"
+    kept_from_season INTEGER,           -- when originally acquired
+    PRIMARY KEY (league_key, team_key, player_name, season),
+    FOREIGN KEY (league_key) REFERENCES league(league_key)
+);
+
 -- ============================================================
 -- Operational tables
 -- ============================================================

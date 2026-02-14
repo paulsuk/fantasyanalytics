@@ -65,6 +65,10 @@ def franchise_seasons(slug: str):
 
     db = Database(slug)
     try:
-        return get_all_seasons(db)
+        seasons = get_all_seasons(db)
+        min_season = franchise.min_season
+        if min_season:
+            seasons = [s for s in seasons if s["season"] >= min_season]
+        return seasons
     finally:
         db.close()

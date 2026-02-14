@@ -17,3 +17,14 @@ def build_team_key(league_key: str, team_id: int) -> str:
     e.g. "458.l.25845" + 3 -> "458.l.25845.t.3"
     """
     return f"{league_key}.t.{team_id}"
+
+
+def extract_player_id(player_key: str) -> str:
+    """Extract stable player ID from a season-specific player key.
+
+    Yahoo player keys follow: {game_key}.p.{player_id}
+    e.g. "458.p.12345" -> "12345"
+
+    The player_id is stable across seasons (same real-world player = same ID).
+    """
+    return player_key.rsplit(".p.", 1)[-1] if player_key else ""

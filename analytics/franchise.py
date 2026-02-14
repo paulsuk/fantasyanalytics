@@ -9,6 +9,11 @@ from db.queries import (
     get_end_of_season_roster,
     get_transaction_counts_for_teams,
     get_trades_for_teams,
+    get_week_matchups,
+    get_team_info,
+    get_keepers_for_teams,
+    get_roster_with_draft_costs,
+    get_players_dropped_in_week,
 )
 from analytics.history import ManagerHistory
 
@@ -78,7 +83,10 @@ class FranchiseDetail:
             "manager_eras": self._manager_eras(history),
             "h2h": self._franchise_h2h(history),
             "rosters": self._end_of_season_rosters(),
+            "keepers": self._keeper_history(),
+            "roster_costs": self._roster_with_costs(),
             "transactions": self._transaction_summary(),
+            "current_matchup": self._current_matchup(),
         }
 
     def _best_finish(self, season_records: list[dict]) -> int | None:
@@ -156,11 +164,18 @@ class FranchiseDetail:
         return result
 
     def _end_of_season_rosters(self) -> dict[int, list[dict]]:
-        """Final roster for each season."""
+        """Final roster for each season, annotated with keeper badges."""
         seasons = get_all_seasons(self.db)
         season_info = {s["season"]: s["league_key"] for s in seasons}
-        rosters: dict[int, list[dict]] = {}
 
+        # Build keeper lookup: {(season, player_name_lower) -> round_cost}
+        team_keys = list(self._team_keys_by_season.values())
+        keeper_rows = get_keepers_for_teams(self.db, team_keys) if team_keys else []
+        keeper_lookup: dict[tuple[int, str], int | None] = {}
+        for kr in keeper_rows:
+            keeper_lookup[(kr["season"], kr["player_name"].lower())] = kr["round_cost"]
+
+        rosters: dict[int, list[dict]] = {}
         for season, team_key in sorted(self._team_keys_by_season.items()):
             league_key = season_info.get(season)
             if not league_key:
@@ -172,16 +187,124 @@ class FranchiseDetail:
             if not last_week:
                 continue
             rows = get_end_of_season_roster(self.db, league_key, team_key, last_week)
-            rosters[season] = [
-                {
+            dropped = get_players_dropped_in_week(self.db, league_key, team_key, last_week)
+            roster = []
+            for r in rows:
+                if r["player_key"] in dropped:
+                    continue
+                name_lower = r["full_name"].lower() if r["full_name"] else ""
+                keeper_key = (season, name_lower)
+                is_keeper = keeper_key in keeper_lookup
+                entry = {
                     "full_name": r["full_name"],
                     "primary_position": r["primary_position"],
                     "selected_position": r["selected_position"],
                     "is_starter": bool(r["is_starter"]),
                 }
-                for r in rows
-            ]
+                if is_keeper:
+                    entry["is_keeper"] = True
+                    entry["keeper_round"] = keeper_lookup[keeper_key]
+                roster.append(entry)
+            rosters[season] = roster
         return rosters
+
+    def _keeper_history(self) -> list[dict]:
+        """Per-season keeper selections for this franchise."""
+        team_keys = list(self._team_keys_by_season.values())
+        if not team_keys:
+            return []
+        rows = get_keepers_for_teams(self.db, team_keys)
+        by_season: dict[int, list[dict]] = {}
+        for r in rows:
+            tenure = None
+            if r["kept_from_season"] is not None:
+                tenure = r["season"] - r["kept_from_season"] + 1
+            by_season.setdefault(r["season"], []).append({
+                "name": r["player_name"],
+                "position": r["primary_position"],
+                "round_cost": r["round_cost"],
+                "kept_from_season": r["kept_from_season"],
+                "tenure": tenure,
+            })
+        return [
+            {"season": season, "keepers": keepers}
+            for season, keepers in sorted(by_season.items())
+        ]
+
+    def _roster_with_costs(self) -> dict[int, list[dict]]:
+        """End-of-season roster with draft costs. Baseball only."""
+        if self._franchise.sport != "mlb":
+            return {}
+
+        seasons = get_all_seasons(self.db)
+        season_info = {s["season"]: s["league_key"] for s in seasons}
+        result: dict[int, list[dict]] = {}
+
+        for season, team_key in sorted(self._team_keys_by_season.items()):
+            league_key = season_info.get(season)
+            if not league_key:
+                continue
+            week_info = get_league_week_info(self.db, league_key)
+            if not week_info:
+                continue
+            last_week = week_info["end_week"] or week_info["current_week"]
+            if not last_week:
+                continue
+            rows = get_roster_with_draft_costs(
+                self.db, league_key, team_key, last_week
+            )
+            dropped = get_players_dropped_in_week(self.db, league_key, team_key, last_week)
+            result[season] = [
+                {
+                    "full_name": r["full_name"],
+                    "primary_position": r["primary_position"],
+                    "selected_position": r["selected_position"],
+                    "is_starter": bool(r["is_starter"]),
+                    "draft_cost": r["draft_cost"],
+                }
+                for r in rows
+                if r["player_key"] not in dropped
+            ]
+        return result
+
+    def _current_matchup(self) -> dict | None:
+        """Latest matchup for the latest unfinished season."""
+        seasons = get_all_seasons(self.db)
+        for s in seasons:  # already ordered by season DESC
+            if s["is_finished"]:
+                continue
+            season = s["season"]
+            if season not in self._team_keys_by_season:
+                continue
+            league_key = s["league_key"]
+            team_key = self._team_keys_by_season[season]
+            # Find the latest week that has matchup data for this team
+            row = self.db.fetchone(
+                "SELECT MAX(week) AS latest_week FROM matchup "
+                "WHERE league_key=? AND (team_key_1=? OR team_key_2=?)",
+                (league_key, team_key, team_key),
+            )
+            if not row or not row["latest_week"]:
+                continue
+            latest_week = row["latest_week"]
+            matchups = get_week_matchups(self.db, league_key, latest_week)
+            for m in matchups:
+                if team_key not in (m["team_key_1"], m["team_key_2"]):
+                    continue
+                is_team_1 = m["team_key_1"] == team_key
+                opp_key = m["team_key_2"] if is_team_1 else m["team_key_1"]
+                opp_info = get_team_info(self.db, league_key, opp_key)
+                return {
+                    "season": season,
+                    "week": latest_week,
+                    "opponent_team_name": opp_info["name"] if opp_info else "Unknown",
+                    "opponent_manager": opp_info["manager_name"] if opp_info else "Unknown",
+                    "cats_won": m["cats_won_1"] if is_team_1 else m["cats_won_2"],
+                    "cats_lost": m["cats_won_2"] if is_team_1 else m["cats_won_1"],
+                    "cats_tied": m["cats_tied"],
+                    "is_playoffs": bool(m["is_playoffs"]),
+                }
+        return None
 
     def _transaction_summary(self) -> dict:
         """Per-season add/drop counts + trade details."""

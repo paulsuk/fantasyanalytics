@@ -160,6 +160,9 @@ def managers(slug: str):
             result["franchises"] = franchise.franchise_list()
             result["franchise_h2h"] = history.franchise_h2h_matrix()
             result["franchise_stats"] = history.franchise_stats()
+            for mgr in result["managers"]:
+                latest = max(mgr["seasons"]) if mgr["seasons"] else None
+                mgr["franchise_id"] = franchise.resolve_franchise(mgr["guid"], latest) if latest else None
         return result
     finally:
         db.close()
@@ -177,7 +180,7 @@ def records(
 
     db = Database(slug)
     try:
-        lr = LeagueRecords(db, include_playoffs=include_playoffs)
+        lr = LeagueRecords(db, include_playoffs=include_playoffs, min_season=franchise.min_season)
         return lr.records()
     finally:
         db.close()

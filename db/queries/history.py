@@ -28,11 +28,13 @@ def get_all_matchups_with_manager_guids(db):
     )
 
 
-def get_category_record_holder(db, display_name: str, order: str):
+def get_category_record_holder(db, display_name: str, order: str, min_season: int = 0):
     """Best single-week value for a category across all seasons.
 
     order should be "DESC" (higher is better) or "ASC" (lower is better).
     """
+    season_filter = "AND l.season >= ? " if min_season else ""
+    params = (display_name, min_season) if min_season else (display_name,)
     return db.fetchone(
         f"SELECT tws.value, tws.week, t.manager_name, t.name AS team_name, "
         f"       l.season, sc.display_name "
@@ -42,8 +44,9 @@ def get_category_record_holder(db, display_name: str, order: str):
         f"JOIN stat_category sc ON tws.league_key = sc.league_key "
         f"    AND tws.stat_id = sc.stat_id "
         f"WHERE sc.display_name = ? AND sc.is_scoring_stat = 1 "
+        f"{season_filter}"
         f"ORDER BY tws.value {order} LIMIT 1",
-        (display_name,),
+        params,
     )
 
 

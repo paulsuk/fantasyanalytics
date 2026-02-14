@@ -41,6 +41,7 @@ from .transactions import (
     get_week_transactions,
     get_transaction_counts_for_teams,
     get_trades_for_teams,
+    get_players_dropped_in_week,
 )
 from .history import (
     get_all_manager_teams,
@@ -48,4 +49,9 @@ from .history import (
     get_category_record_holder,
     get_all_regular_season_matchups_with_managers,
     get_all_regular_season_matchup_scores,
+)
+from .keepers import (
+    get_keepers_for_teams,
+    get_keepers_by_season,
+    get_roster_with_draft_costs,
 )

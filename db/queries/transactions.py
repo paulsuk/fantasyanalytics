@@ -85,6 +85,34 @@ def get_transaction_counts_for_teams(db, team_keys: list[str]):
     )
 
 
+def get_players_dropped_in_week(db, league_key: str, team_key: str, week: int) -> set[str]:
+    """Player keys dropped/traded away from a team during a specific week.
+
+    Returns player_keys that left the team. A player dropped and re-added
+    in the same week (waiver churn) is NOT excluded.
+    """
+    rows = db.fetchall(
+        "SELECT tp.player_key, tp.type "
+        "FROM transaction_player tp "
+        "JOIN transaction_record tr ON tp.transaction_key = tr.transaction_key "
+        "WHERE tr.league_key = ? AND tr.week = ? "
+        "  AND ("
+        "    (tp.type = 'drop' AND tp.source_team_key = ?)"
+        "    OR (tp.type = 'add' AND tp.destination_team_key = ?)"
+        "  ) "
+        "ORDER BY tr.timestamp",
+        (league_key, week, team_key, team_key),
+    )
+    # Process in timestamp order: drops add to set, adds remove
+    dropped: set[str] = set()
+    for r in rows:
+        if r["type"] == "drop":
+            dropped.add(r["player_key"])
+        elif r["type"] == "add":
+            dropped.discard(r["player_key"])
+    return dropped
+
+
 def get_trades_for_teams(db, team_keys: list[str]):
     """All trade transactions involving any of the given team_keys, with player details."""
     ph = ",".join("?" * len(team_keys))

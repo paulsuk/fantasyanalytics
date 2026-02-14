@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from config import get_franchise_by_slug, add_managers, Franchise, bench_positions
 from db import Database
 from sync.yahoo_client import YahooClient
-from utils import decode_name, build_team_key
+from utils import decode_name, build_team_key, extract_player_id
 
 
 def _now_iso() -> str:
@@ -649,6 +649,139 @@ class YahooSync:
 
         self._check_unconfigured_managers(league_key)
         print(f"Season {season} sync complete.\n")
+
+    def sync_keepers(self):
+        """Sync keeper designations from Yahoo for all seasons.
+
+        Queries week 1 rosters and checks Player.is_keeper for each player.
+        Keepers are only available from season 2 onward (first season has no keepers).
+        """
+        print(f"\nSyncing keepers for {self.franchise.slug}")
+
+        for season in sorted(self.franchise.seasons):
+            league_key = self.franchise.league_key_for_season(season)
+            if not league_key:
+                continue
+
+            if self._is_synced(league_key, "keepers"):
+                print(f"  [skip] keepers already synced for {season}")
+                continue
+
+            league_row = self.db.fetchone(
+                "SELECT num_teams FROM league WHERE league_key=?", (league_key,)
+            )
+            if not league_row:
+                print(f"  [skip] no metadata for {season} — sync season first")
+                continue
+
+            num_teams = league_row["num_teams"]
+            query = self.client.query_for_franchise(self.franchise.slug, season)
+
+            self._log_start(league_key, "keepers")
+            try:
+                total = 0
+                with self.db.transaction():
+                    for team_id in range(1, num_teams + 1):
+                        team_key = build_team_key(league_key, team_id)
+                        try:
+                            roster = query.get_team_roster_player_stats_by_week(
+                                team_id=team_id, chosen_week=1
+                            )
+                            self._wait()
+
+                            for p in roster:
+                                ik = getattr(p, "is_keeper", None)
+                                if not isinstance(ik, dict) or not ik.get("kept"):
+                                    continue
+
+                                player_key = p.player_key
+                                name_obj = p.name
+                                full_name = name_obj.full if hasattr(name_obj, "full") else str(name_obj)
+
+                                self.db.execute(
+                                    "INSERT OR REPLACE INTO keeper "
+                                    "(league_key, team_key, player_key, player_name, "
+                                    "season, round_cost, kept_from_season) "
+                                    "VALUES (?,?,?,?,?,?,?)",
+                                    (league_key, team_key, player_key, full_name,
+                                     season, None, None),
+                                )
+                                total += 1
+
+                        except Exception as e:
+                            print(f"    [warn] team {team_id} week 1 failed: {e}")
+
+                    # Enrich round_cost for baseball: team pick index from draft
+                    if self.franchise.sport == "mlb" and total > 0:
+                        self.db.execute(
+                            "UPDATE keeper SET round_cost = sub.team_pick_idx "
+                            "FROM ("
+                            "  SELECT dp.player_key, dp.team_key, "
+                            "    ROW_NUMBER() OVER (PARTITION BY dp.team_key ORDER BY dp.pick) as team_pick_idx "
+                            "  FROM draft_pick dp "
+                            "  WHERE dp.league_key = ?"
+                            ") sub "
+                            "WHERE keeper.league_key = ? "
+                            "  AND keeper.team_key = sub.team_key "
+                            "  AND keeper.player_key = sub.player_key",
+                            (league_key, league_key),
+                        )
+
+                    self._log_complete(league_key, "keepers", records=total)
+                print(f"  [done] {season}: {total} keepers")
+
+            except Exception as e:
+                self._log_fail(league_key, "keepers", error=str(e))
+                print(f"  [fail] {season}: {e}")
+
+        # Compute kept_from_season across all seasons
+        self._compute_kept_from_season()
+
+        print("Keeper sync complete.\n")
+
+    def _compute_kept_from_season(self):
+        """Compute kept_from_season using consecutive-season runs.
+
+        Groups keepers by (team_number, player_suffix) — both stay consistent
+        across seasons. Uses gap-and-island: season - row_number = group_id
+        to find consecutive runs, then sets kept_from_season = earliest in each run.
+        """
+        rows = self.db.fetchall(
+            "SELECT rowid, team_key, player_key, season "
+            "FROM keeper ORDER BY team_key, player_key, season"
+        )
+        if not rows:
+            return
+
+        def team_number(team_key: str) -> str:
+            # "458.l.25845.t.1" -> "1"
+            return team_key.rsplit(".t.", 1)[-1]
+
+        # Group by (team_number, player_id) — must sort first for groupby
+        from itertools import groupby
+        def gk(r):
+            return (team_number(r["team_key"]), extract_player_id(r["player_key"]))
+
+        rows_sorted = sorted(rows, key=lambda r: (gk(r), r["season"]))
+
+        updates = []
+        for _key, group in groupby(rows_sorted, key=gk):
+            entries = list(group)
+            current_start = entries[0]["season"]
+            for i, entry in enumerate(entries):
+                if i > 0 and entry["season"] != entries[i - 1]["season"] + 1:
+                    current_start = entry["season"]
+                updates.append((current_start, entry["rowid"]))
+
+        with self.db.transaction():
+            for kept_from, rowid in updates:
+                self.db.execute(
+                    "UPDATE keeper SET kept_from_season = ? WHERE rowid = ?",
+                    (kept_from, rowid),
+                )
+
+        if updates:
+            print(f"  [done] computed kept_from_season for {len(updates)} keepers")
 
     def sync_standings(self):
         """Re-fetch standings for all seasons to update finish/playoff_seed.

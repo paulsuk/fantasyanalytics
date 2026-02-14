@@ -23,8 +23,11 @@ class ManagerHistory:
     def _load_manager_teams(self) -> dict[str, list[dict]]:
         """Map manager_guid -> list of {league_key, season, team_key, team_name, finish, ...}."""
         rows = get_all_manager_teams(self.db)
+        min_season = self._franchise.min_season
         by_guid: dict[str, list[dict]] = {}
         for r in rows:
+            if min_season and r["season"] < min_season:
+                continue
             guid = r["manager_guid"]
             if guid not in by_guid:
                 by_guid[guid] = []
@@ -41,8 +44,12 @@ class ManagerHistory:
         return by_guid
 
     def _all_matchups_with_guids(self) -> list:
-        """All matchups annotated with manager GUIDs."""
-        return get_all_matchups_with_manager_guids(self.db)
+        """All matchups annotated with manager GUIDs, filtered by min_season."""
+        rows = get_all_matchups_with_manager_guids(self.db)
+        min_season = self._franchise.min_season
+        if min_season:
+            return [r for r in rows if r["season"] >= min_season]
+        return rows
 
     def managers(self) -> list[dict]:
         """All managers with cross-season aggregate stats."""
@@ -317,9 +324,10 @@ class ManagerHistory:
 class LeagueRecords:
     """All-time league records across all seasons for a franchise."""
 
-    def __init__(self, db: Database, include_playoffs: bool = False):
+    def __init__(self, db: Database, include_playoffs: bool = False, min_season: int = 0):
         self.db = db
         self._include_playoffs = include_playoffs
+        self._min_season = min_season
 
     def records(self) -> dict:
         """Compute all-time records."""
@@ -339,7 +347,7 @@ class LeagueRecords:
             higher_is_better = cat["sort_order"] == 1
             order = "DESC" if higher_is_better else "ASC"
 
-            row = get_category_record_holder(self.db, dn, order)
+            row = get_category_record_holder(self.db, dn, order, self._min_season)
             if row:
                 results.append({
                     "category": dn,
@@ -349,14 +357,15 @@ class LeagueRecords:
                     "season": row["season"],
                     "week": row["week"],
                     "higher_is_better": higher_is_better,
-                    "seasons_active": cat["seasons"],
+                    "seasons_active": [s for s in cat["seasons"] if s >= self._min_season] if self._min_season else cat["seasons"],
                 })
 
         return results
 
     def _streaks(self) -> dict:
         """Longest win and loss streaks across all seasons."""
-        rows = get_all_regular_season_matchups_with_managers(self.db, self._include_playoffs)
+        all_rows = get_all_regular_season_matchups_with_managers(self.db, self._include_playoffs)
+        rows = [r for r in all_rows if r["season"] >= self._min_season] if self._min_season else all_rows
 
         # Track per-manager streaks across all seasons
         active: dict[str, dict] = {}
@@ -419,7 +428,8 @@ class LeagueRecords:
 
     def _matchup_records(self) -> dict:
         """Biggest blowout and closest match."""
-        rows = get_all_regular_season_matchup_scores(self.db, self._include_playoffs)
+        all_rows = get_all_regular_season_matchup_scores(self.db, self._include_playoffs)
+        rows = [r for r in all_rows if r["season"] >= self._min_season] if self._min_season else all_rows
 
         biggest_blowout = None
         closest_match = None
