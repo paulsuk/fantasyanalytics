@@ -62,13 +62,17 @@ def sync_command(slug: str, season: int = None, incremental: bool = False,
         syncer.close()
 
 
-def sync_keepers_command(slug: str):
+def sync_keepers_command(slug: str, verbose: bool = False, force: bool = False):
     """Sync keeper designations from Yahoo API into the database."""
     from sync.yahoo_sync import YahooSync
 
     syncer = YahooSync(slug)
     try:
-        syncer.sync_keepers()
+        if force:
+            syncer.db.execute("DELETE FROM sync_log WHERE sync_type='keepers'")
+            syncer.db.execute("DELETE FROM keeper")
+            print("Cleared existing keeper data and sync log.")
+        syncer.sync_keepers(verbose=verbose)
     finally:
         syncer.close()
 
@@ -170,8 +174,10 @@ Usage:
   python main.py sync <slug> --sync-standings   — Update finish/playoff_seed from Yahoo
   python main.py managers <slug>                — Discover manager GUIDs for config
 
-  python main.py keepers sync <slug>            — Sync keepers from Yahoo API into DB
-  python main.py keepers show <slug>            — Show keeper data from DB
+  python main.py keepers sync <slug>              — Sync keepers from Yahoo API into DB
+  python main.py keepers sync <slug> --verbose   — Sync with diagnostic output per player
+  python main.py keepers sync <slug> --force     — Clear existing data and resync
+  python main.py keepers show <slug>             — Show keeper data from DB
 """.strip()
 
 
@@ -206,7 +212,9 @@ def main():
         subcmd = args[1].lower()
         slug = args[2]
         if subcmd == "sync":
-            sync_keepers_command(slug)
+            verbose = "--verbose" in args
+            force = "--force" in args
+            sync_keepers_command(slug, verbose=verbose, force=force)
         elif subcmd == "show":
             show_keepers(slug)
         else:

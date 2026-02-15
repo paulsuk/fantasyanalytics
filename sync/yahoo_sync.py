@@ -650,11 +650,15 @@ class YahooSync:
         self._check_unconfigured_managers(league_key)
         print(f"Season {season} sync complete.\n")
 
-    def sync_keepers(self):
+    def sync_keepers(self, verbose: bool = False):
         """Sync keeper designations from Yahoo for all seasons.
 
         Queries week 1 rosters and checks Player.is_keeper for each player.
         Keepers are only available from season 2 onward (first season has no keepers).
+
+        Args:
+            verbose: If True, print detailed diagnostic info for every player's
+                     is_keeper value (useful for debugging missing keepers).
         """
         print(f"\nSyncing keepers for {self.franchise.slug}")
 
@@ -689,15 +693,32 @@ class YahooSync:
                             )
                             self._wait()
 
+                            if verbose:
+                                print(f"    Team {team_id} ({team_key}): {len(roster)} players")
+
+                            team_keepers = 0
                             for p in roster:
                                 ik = getattr(p, "is_keeper", None)
-                                if not isinstance(ik, dict) or not ik.get("kept"):
-                                    continue
-
-                                player_key = p.player_key
                                 name_obj = p.name
                                 full_name = name_obj.full if hasattr(name_obj, "full") else str(name_obj)
 
+                                # Determine keeper status — handle dict, int, and other formats
+                                if isinstance(ik, dict):
+                                    is_kept = bool(ik.get("kept"))
+                                elif isinstance(ik, (int, float)):
+                                    is_kept = bool(ik)
+                                else:
+                                    is_kept = False
+
+                                if verbose:
+                                    status = "KEEPER" if is_kept else "      "
+                                    safe_name = full_name.encode("ascii", "replace").decode()
+                                    print(f"      {status} {safe_name:30s} is_keeper={ik!r} (type={type(ik).__name__})")
+
+                                if not is_kept:
+                                    continue
+
+                                player_key = p.player_key
                                 self.db.execute(
                                     "INSERT OR REPLACE INTO keeper "
                                     "(league_key, team_key, player_key, player_name, "
@@ -707,12 +728,23 @@ class YahooSync:
                                      season, None, None),
                                 )
                                 total += 1
+                                team_keepers += 1
+
+                            if verbose:
+                                print(f"      -> {team_keepers} keepers for team {team_id}")
 
                         except Exception as e:
                             print(f"    [warn] team {team_id} week 1 failed: {e}")
 
-                    # Enrich round_cost for baseball: team pick index from draft
-                    if self.franchise.sport == "mlb" and total > 0:
+                    # Draft-based fallback for basketball
+                    if self.franchise.sport == "nba":
+                        added = self._draft_keeper_fallback(
+                            league_key, season, num_teams,
+                        )
+                        total += added
+
+                    # Enrich round_cost from draft picks (team pick index)
+                    if total > 0:
                         self.db.execute(
                             "UPDATE keeper SET round_cost = sub.team_pick_idx "
                             "FROM ("
@@ -739,28 +771,143 @@ class YahooSync:
 
         print("Keeper sync complete.\n")
 
+    def _draft_keeper_fallback(self, league_key: str, season: int,
+                               num_teams: int,
+                               keepers_per_team: int = 4) -> int:
+        """Fill missing keepers from draft picks for basketball leagues.
+
+        Yahoo's is_keeper flag is incomplete for many teams/seasons.
+        Basketball keepers are either the first N or last N draft picks
+        per team. This method auto-detects the mode from existing Yahoo
+        keepers and fills in the gaps.
+
+        Returns the number of keepers added.
+        """
+        # Count existing Yahoo-flagged keepers per team
+        existing = self.db.fetchall(
+            "SELECT team_key, COUNT(*) as cnt FROM keeper "
+            "WHERE league_key=? GROUP BY team_key",
+            (league_key,),
+        )
+        existing_counts = {r["team_key"]: r["cnt"] for r in existing}
+        total_existing = sum(existing_counts.values())
+
+        if total_existing == 0:
+            # No Yahoo keepers at all — probably first season, skip
+            return 0
+
+        expected_total = num_teams * keepers_per_team
+        if total_existing >= expected_total:
+            return 0  # All keepers accounted for
+
+        # Get draft picks with per-team pick index
+        picks = self.db.fetchall(
+            "SELECT dp.team_key, dp.player_key, p.full_name, "
+            "  ROW_NUMBER() OVER (PARTITION BY dp.team_key ORDER BY dp.pick) "
+            "    as team_pick_idx, "
+            "  COUNT(*) OVER (PARTITION BY dp.team_key) as total_picks "
+            "FROM draft_pick dp "
+            "LEFT JOIN player p ON dp.player_key = p.player_key "
+            "WHERE dp.league_key = ? "
+            "ORDER BY dp.team_key, dp.pick",
+            (league_key,),
+        )
+        if not picks:
+            return 0
+
+        total_picks_per_team = picks[0]["total_picks"]
+
+        # Build set of existing keeper player_keys
+        keeper_pks = set()
+        for kr in self.db.fetchall(
+            "SELECT player_key FROM keeper WHERE league_key=?",
+            (league_key,),
+        ):
+            if kr["player_key"]:
+                keeper_pks.add(kr["player_key"])
+
+        # Auto-detect mode: count Yahoo keepers in first-N vs last-N
+        first_n = set(range(1, keepers_per_team + 1))
+        last_n_start = total_picks_per_team - keepers_per_team + 1
+        last_n = set(range(last_n_start, total_picks_per_team + 1))
+
+        first_count = 0
+        last_count = 0
+        for p in picks:
+            if p["player_key"] in keeper_pks:
+                if p["team_pick_idx"] in first_n:
+                    first_count += 1
+                elif p["team_pick_idx"] in last_n:
+                    last_count += 1
+
+        if first_count >= last_count:
+            keeper_positions = first_n
+            mode = "first"
+        else:
+            keeper_positions = last_n
+            mode = "last"
+
+        # Insert missing keepers from draft picks at detected positions
+        added = 0
+        for p in picks:
+            if p["team_pick_idx"] not in keeper_positions:
+                continue
+            if p["player_key"] in keeper_pks:
+                continue  # Already a keeper
+
+            full_name = p["full_name"] or "Unknown"
+            self.db.execute(
+                "INSERT OR REPLACE INTO keeper "
+                "(league_key, team_key, player_key, player_name, "
+                "season, round_cost, kept_from_season) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (league_key, p["team_key"], p["player_key"], full_name,
+                 season, p["team_pick_idx"], None),
+            )
+            added += 1
+
+        if added:
+            print(f"    [draft fallback] {mode}-{keepers_per_team} mode: "
+                  f"added {added} keepers ({total_existing} from Yahoo)")
+
+        return added
+
     def _compute_kept_from_season(self):
         """Compute kept_from_season using consecutive-season runs.
 
-        Groups keepers by (team_number, player_suffix) — both stay consistent
-        across seasons. Uses gap-and-island: season - row_number = group_id
-        to find consecutive runs, then sets kept_from_season = earliest in each run.
+        Groups keepers by (franchise_id, player_key) — franchise_id is
+        resolved from manager GUID via config, so it stays stable even
+        when team numbers change across seasons. Uses gap-and-island to
+        find consecutive runs and sets kept_from_season = earliest in run.
         """
-        rows = self.db.fetchall(
-            "SELECT rowid, team_key, player_key, season "
-            "FROM keeper ORDER BY team_key, player_key, season"
+        raw_rows = self.db.fetchall(
+            "SELECT k.rowid, k.team_key, k.player_key, k.season, "
+            "       t.manager_guid "
+            "FROM keeper k "
+            "JOIN team t ON k.league_key = t.league_key "
+            "  AND k.team_key = t.team_key "
+            "ORDER BY k.player_key, k.season"
         )
-        if not rows:
+        if not raw_rows:
             return
 
-        def team_number(team_key: str) -> str:
-            # "458.l.25845.t.1" -> "1"
-            return team_key.rsplit(".t.", 1)[-1]
+        # Resolve each keeper's franchise_id from manager GUID
+        rows = []
+        for r in raw_rows:
+            guid = r["manager_guid"] or ""
+            rows.append({
+                "rowid": r["rowid"],
+                "player_key": r["player_key"],
+                "season": r["season"],
+                "franchise_id": (
+                    self.franchise.resolve_franchise(guid, r["season"]) or guid
+                ),
+            })
 
-        # Group by (team_number, player_id) — must sort first for groupby
         from itertools import groupby
+
         def gk(r):
-            return (team_number(r["team_key"]), extract_player_id(r["player_key"]))
+            return (r["franchise_id"], extract_player_id(r["player_key"]))
 
         rows_sorted = sorted(rows, key=lambda r: (gk(r), r["season"]))
 
@@ -865,6 +1012,10 @@ class YahooSync:
             (league_key,),
         )
         self.sync_transactions(query, league_key)
+
+        # Backfill transaction weeks + repair league week metadata
+        self._backfill_transaction_weeks(league_key)
+        self._repair_league_weeks(league_key)
 
         print("Incremental sync complete.\n")
 

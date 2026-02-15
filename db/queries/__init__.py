@@ -32,6 +32,7 @@ from .players import (
     get_weekly_roster_stats,
     get_category_leaders,
     get_player_weekly_stats_sum,
+    get_max_roster_week,
     get_end_of_season_roster,
 )
 from .transactions import (

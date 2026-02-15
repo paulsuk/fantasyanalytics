@@ -5,7 +5,7 @@ from db import Database
 from db.queries import (
     get_all_manager_teams,
     get_all_seasons,
-    get_league_week_info,
+    get_max_roster_week,
     get_end_of_season_roster,
     get_transaction_counts_for_teams,
     get_trades_for_teams,
@@ -180,10 +180,7 @@ class FranchiseDetail:
             league_key = season_info.get(season)
             if not league_key:
                 continue
-            week_info = get_league_week_info(self.db, league_key)
-            if not week_info:
-                continue
-            last_week = week_info["end_week"] or week_info["current_week"]
+            last_week = get_max_roster_week(self.db, league_key, team_key)
             if not last_week:
                 continue
             rows = get_end_of_season_roster(self.db, league_key, team_key, last_week)
@@ -244,10 +241,7 @@ class FranchiseDetail:
             league_key = season_info.get(season)
             if not league_key:
                 continue
-            week_info = get_league_week_info(self.db, league_key)
-            if not week_info:
-                continue
-            last_week = week_info["end_week"] or week_info["current_week"]
+            last_week = get_max_roster_week(self.db, league_key, team_key)
             if not last_week:
                 continue
             rows = get_roster_with_draft_costs(

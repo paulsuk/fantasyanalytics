@@ -60,6 +60,16 @@ def get_player_weekly_stats_sum(db, league_key: str, player_key: str,
     )
 
 
+def get_max_roster_week(db, league_key: str, team_key: str) -> int | None:
+    """Get the maximum week with roster data for a team in a league."""
+    row = db.fetchone(
+        "SELECT MAX(week) as max_week FROM weekly_roster "
+        "WHERE league_key=? AND team_key=?",
+        (league_key, team_key),
+    )
+    return row["max_week"] if row else None
+
+
 def get_end_of_season_roster(db, league_key: str, team_key: str, week: int):
     """Players on a team's roster in the specified week."""
     return db.fetchall(
